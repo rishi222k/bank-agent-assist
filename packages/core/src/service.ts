@@ -119,6 +119,7 @@ export class CallService {
       eligibility: null,
       caseId: null,
       notes: null,
+      wrapUpStartedAt: null,
     };
     this.store.insertCall(call);
     this.audit(call, "call.started", `Incoming call from ${scenario.callerPhone}`);
@@ -208,6 +209,7 @@ export class CallService {
       throw new AppError("bad_request", "Only the unrecognised-charge playbook is available in M0");
     // One case per call in M0. Re-confirming would detach the case from what the notes describe.
     if (call.caseId) throw new AppError("conflict", "A case has already been raised on this call");
+    this.assertNotWrappingUp(call);
     const transaction = this.mustOwnTransaction(call, input.transactionId);
     const eligibility = this.eligibilityFor(transaction);
 
@@ -263,6 +265,7 @@ export class CallService {
       return { case: existing, replayed: true };
     }
     this.assertActive(call);
+    this.assertNotWrappingUp(call);
 
     if (!call.confirmed || call.confirmed.transactionId !== input.form.transactionId)
       throw new AppError("conflict", "Confirm the transaction with the customer before raising a dispute");
@@ -334,6 +337,8 @@ export class CallService {
 
   async getWrapUpDraft(callId: string): Promise<AiResult<WrapUp>> {
     const call = this.mustVerifiedCall(callId);
+    // From here the notes describe the call, so no new action may change what they describe.
+    if (!call.endedAt) call.wrapUpStartedAt ??= this.now().toISOString();
     const createdCase = call.caseId ? (this.store.getCase(call.caseId) ?? null) : null;
     const transaction = call.confirmed ? (this.store.getTransaction(call.confirmed.transactionId) ?? null) : null;
     return this.runAi(
@@ -358,7 +363,10 @@ export class CallService {
 
   saveWrapUp(callId: string, notes: string): { endedAt: string } {
     const call = this.mustActiveCall(callId);
-    call.notes = notes;
+    // The saved notes always carry the case reference, even if the agent edited it out.
+    const createdCase = call.caseId ? this.store.getCase(call.caseId) : undefined;
+    call.notes =
+      createdCase && !notes.includes(createdCase.reference) ? `Case ${createdCase.reference}.\n${notes}` : notes;
     call.endedAt = this.now().toISOString();
     const evidence = [call.confirmed?.transactionId, call.caseId].filter((x): x is string => Boolean(x));
     this.audit(call, "call.wrapped_up", "Call notes saved and call ended", evidence);
@@ -457,6 +465,10 @@ export class CallService {
     const call = this.mustVerifiedCall(id);
     this.assertActive(call);
     return call;
+  }
+  private assertNotWrappingUp(call: CallSession) {
+    if (call.wrapUpStartedAt)
+      throw new AppError("conflict", "Wrap-up has started on this call. Start a new call to raise a case");
   }
   private assertActive(call: CallSession) {
     if (call.endedAt) throw new AppError("call_ended", "This call has ended. Start a new call to make changes");

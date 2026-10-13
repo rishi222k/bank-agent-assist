@@ -290,6 +290,39 @@ describe("call lifecycle and action safety", () => {
   });
 });
 
+describe("wrap-up", () => {
+  it("refuses a new confirmation or case once wrap-up has started", async () => {
+    const service = new CallService(new MemoryStore(), new MockProvider());
+    const { callId } = service.startCall(SCENARIO, "demo-agent");
+    service.verifyCaller(callId, GOOD);
+    await service.getWrapUpDraft(callId);
+
+    await expect(
+      service.confirmIssue(callId, { transactionId: "txn_1042", issueType: "unrecognised_charge" }),
+    ).rejects.toThrowError(/Wrap-up has started/);
+  });
+
+  it("keeps the case reference in the saved notes even if the agent removed it", async () => {
+    const store = new MemoryStore();
+    const service = new CallService(store, new MockProvider());
+    const { callId } = service.startCall(SCENARIO, "demo-agent");
+    service.verifyCaller(callId, GOOD);
+    await service.confirmIssue(callId, { transactionId: "txn_1042", issueType: "unrecognised_charge" });
+    const created = service.createDispute({
+      callId,
+      idempotencyKey: "wrap-key-1",
+      form: {
+        transactionId: "txn_1042",
+        reason: "not_authorised",
+        customerStatement: "I did not make this purchase.",
+        cardInPossession: true,
+      },
+    }).case;
+    service.saveWrapUp(callId, "Customer called; sorted.");
+    expect(store.getCall(callId)?.notes).toBe(`Case ${created.reference}.\nCustomer called; sorted.`);
+  });
+});
+
 describe("mock amount parsing", () => {
   it.each([
     ["It's about a hundred and thirty dollars", 130],

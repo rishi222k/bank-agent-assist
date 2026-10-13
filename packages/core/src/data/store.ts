@@ -32,6 +32,8 @@ export type CallSession = {
   eligibility: EligibilityResult | null;
   caseId: string | null;
   notes: string | null;
+  /** Set when the wrap-up draft is first requested; no new actions after that. */
+  wrapUpStartedAt: string | null;
 };
 
 export type AuditEvent = {

@@ -91,13 +91,16 @@ export function CopilotPanel({ flow }: { flow: CallFlow }) {
 
   return (
     <div className="space-y-4">
-      {!confirmed ? (
-        <div ref={stage === "confirm" ? latest : undefined} className="space-y-4">
-          <IssueTypeCard flow={flow} />
-          {waitingForMatch ? <ListeningCard /> : <MatchCard flow={flow} selected={selected} />}
-        </div>
-      ) : (
+      {/* Once wrap-up starts, the notes describe the call: no new confirmation or case. */}
+      {confirmed ? (
         <ConfirmedSummary flow={flow} />
+      ) : (
+        !flow.wrapUpRequested && (
+          <div ref={stage === "confirm" ? latest : undefined} className="space-y-4">
+            <IssueTypeCard flow={flow} />
+            {waitingForMatch ? <ListeningCard /> : <MatchCard flow={flow} selected={selected} />}
+          </div>
+        )
       )}
 
       {confirmed && (

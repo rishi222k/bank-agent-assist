@@ -48,7 +48,8 @@ export function recommendPrompt(input: RecommendInput) {
 Task: the agent has confirmed which transaction the customer is calling about, and the rules engine has checked dispute eligibility.
 Recommend the next steps for the agent (cite policy clauses and the transaction), 1-3 sentences the agent can say to the customer, and a pre-fill for the dispute form.
 If the transaction is not eligible, recommend the permitted next step instead of a dispute and explain why using the failed check.
-customerStatement must be written in the first person from the customer's point of view, based only on the transcript.`,
+customerStatement must be written in the first person from the customer's point of view, based only on the transcript.
+If the customer says the card is not in their possession, include escalating to the fraud team as a step (cite DSP-1.6).`,
     user: JSON.stringify({
       today: input.today,
       customer: { id: input.customer.id, name: input.customer.name },
@@ -66,7 +67,7 @@ export function wrapUpPrompt(input: WrapUpInput) {
   return {
     system: `${SYSTEM_BASE}
 Task: write after-call notes for the case file. Include: why the customer called, what was verified, the transaction discussed, the outcome (quote the case reference exactly if a case was created), and what the customer was told.
-followUps: concrete next actions with owners, if any.`,
+followUps: concrete next actions with owners, if any. If createdCase.cardInPossession is false, add a fraud-team follow-up (policy DSP-1.6).`,
     user: JSON.stringify({
       today: input.today,
       customer: { id: input.customer.id, name: input.customer.name },

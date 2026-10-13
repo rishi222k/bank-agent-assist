@@ -143,7 +143,10 @@ export class MockProvider implements AiProvider {
     ];
     if (createdCase) {
       lines.push(
-        `Dispute ${createdCase.reference} raised (reason: ${createdCase.reason.replace("_", " ")}). Card remains with customer.`,
+        `Dispute ${createdCase.reference} raised (reason: ${createdCase.reason.replace("_", " ")}). ` +
+          (createdCase.cardInPossession
+            ? "Card remains with customer."
+            : "Card not in customer's possession; treated as compromised (DSP-1.6)."),
       );
       lines.push("Customer told: provisional credit decision within 10 business days, investigation up to 90 days.");
     } else if (eligibility?.existingCase) {
@@ -155,7 +158,12 @@ export class MockProvider implements AiProvider {
     }
     return {
       notes: lines.join("\n"),
-      followUps: createdCase ? ["Disputes team: investigate case " + createdCase.reference] : [],
+      followUps: createdCase
+        ? [
+            `Disputes team: investigate case ${createdCase.reference}`,
+            ...(createdCase.cardInPossession ? [] : ["Fraud team: card not in customer's possession (DSP-1.6)"]),
+          ]
+        : [],
     };
   }
 }

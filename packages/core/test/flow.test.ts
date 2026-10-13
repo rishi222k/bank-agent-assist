@@ -202,6 +202,127 @@ describe("exception paths", () => {
   });
 });
 
+describe("call lifecycle and action safety", () => {
+  const form = {
+    transactionId: "txn_1042",
+    reason: "not_authorised" as const,
+    customerStatement: "I did not make this purchase.",
+    cardInPossession: true,
+  };
+
+  async function confirmedCall(service: CallService) {
+    const { callId } = service.startCall(SCENARIO, "demo-agent");
+    service.verifyCaller(callId, GOOD);
+    await service.confirmIssue(callId, { transactionId: "txn_1042", issueType: "unrecognised_charge" });
+    return callId;
+  }
+
+  it("rejects changes once the call has ended, but still replays a create that already succeeded", async () => {
+    const service = new CallService(new MemoryStore(), new MockProvider());
+    const callId = await confirmedCall(service);
+    const created = service.createDispute({ callId, idempotencyKey: "key-ended-1", form }).case;
+    service.saveWrapUp(callId, "Notes");
+
+    await expect(service.addTurn(callId, { speaker: "customer", text: "One more thing" })).rejects.toThrowError(
+      /call has ended/,
+    );
+    await expect(
+      service.confirmIssue(callId, { transactionId: "txn_1038", issueType: "unrecognised_charge" }),
+    ).rejects.toThrowError(/call has ended/);
+    expect(() =>
+      service.createDispute({
+        callId,
+        idempotencyKey: "key-ended-2",
+        form: { ...form, transactionId: "txn_1038" },
+      }),
+    ).toThrowError(/call has ended/);
+    expect(() => service.saveWrapUp(callId, "Changed notes")).toThrowError(/call has ended/);
+
+    const retry = service.createDispute({ callId, idempotencyKey: "key-ended-1", form });
+    expect(retry).toMatchObject({ replayed: true, case: { id: created.id } });
+  });
+
+  it("doesn't replay an idempotency key on a different call or transaction", async () => {
+    const service = new CallService(new MemoryStore(), new MockProvider());
+    const first = await confirmedCall(service);
+    service.createDispute({ callId: first, idempotencyKey: "shared-key-1", form });
+
+    const second = service.startCall(SCENARIO, "demo-agent").callId;
+    service.verifyCaller(second, GOOD);
+    expect(() => service.createDispute({ callId: second, idempotencyKey: "shared-key-1", form })).toThrowError(
+      /already used for a different request/,
+    );
+    expect(() =>
+      service.createDispute({
+        callId: first,
+        idempotencyKey: "shared-key-1",
+        form: { ...form, transactionId: "txn_1038" },
+      }),
+    ).toThrowError(/already used for a different request/);
+  });
+
+  it("won't re-confirm a different transaction after a case was raised on the call", async () => {
+    const service = new CallService(new MemoryStore(), new MockProvider());
+    const callId = await confirmedCall(service);
+    service.createDispute({ callId, idempotencyKey: "key-reconfirm-1", form });
+    await expect(
+      service.confirmIssue(callId, { transactionId: "txn_1038", issueType: "unrecognised_charge" }),
+    ).rejects.toThrowError(/already been raised/);
+  });
+
+  it("DSP-1.6: a card not in the customer's possession is flagged for fraud escalation", async () => {
+    const service = new CallService(new MemoryStore(), new MockProvider());
+    const callId = await confirmedCall(service);
+    const created = service.createDispute({
+      callId,
+      idempotencyKey: "key-compromised-1",
+      form: { ...form, cardInPossession: false },
+    }).case;
+
+    const event = service.getAudit(callId).events.find((e) => e.type === "dispute.created")!;
+    expect(event.evidenceIds).toContain("DSP-1.6");
+    expect(event.data).toMatchObject({ fraudEscalation: true });
+
+    const draft = await service.getWrapUpDraft(callId);
+    expect(draft.ok && draft.data.notes).toContain(created.reference);
+    expect(draft.ok && draft.data.notes).not.toContain("Card remains with customer");
+    expect(draft.ok && draft.data.followUps.join(" ")).toMatch(/Fraud team/);
+  });
+});
+
+describe("wrap-up", () => {
+  it("refuses a new confirmation or case once wrap-up has started", async () => {
+    const service = new CallService(new MemoryStore(), new MockProvider());
+    const { callId } = service.startCall(SCENARIO, "demo-agent");
+    service.verifyCaller(callId, GOOD);
+    await service.getWrapUpDraft(callId);
+
+    await expect(
+      service.confirmIssue(callId, { transactionId: "txn_1042", issueType: "unrecognised_charge" }),
+    ).rejects.toThrowError(/Wrap-up has started/);
+  });
+
+  it("keeps the case reference in the saved notes even if the agent removed it", async () => {
+    const store = new MemoryStore();
+    const service = new CallService(store, new MockProvider());
+    const { callId } = service.startCall(SCENARIO, "demo-agent");
+    service.verifyCaller(callId, GOOD);
+    await service.confirmIssue(callId, { transactionId: "txn_1042", issueType: "unrecognised_charge" });
+    const created = service.createDispute({
+      callId,
+      idempotencyKey: "wrap-key-1",
+      form: {
+        transactionId: "txn_1042",
+        reason: "not_authorised",
+        customerStatement: "I did not make this purchase.",
+        cardInPossession: true,
+      },
+    }).case;
+    service.saveWrapUp(callId, "Customer called; sorted.");
+    expect(store.getCall(callId)?.notes).toBe(`Case ${created.reference}.\nCustomer called; sorted.`);
+  });
+});
+
 describe("mock amount parsing", () => {
   it.each([
     ["It's about a hundred and thirty dollars", 130],

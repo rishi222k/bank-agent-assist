@@ -138,3 +138,35 @@ test("d. docs-only changes pass; anything under .github or code does not", () =>
   assert.equal(isDocsOnly([]), false);
   assert.equal(decide(profile, { ...base, files: ["docs/SCOPE.md"] }).path, "docs-only");
 });
+
+test("d. a rename out of the app or a truncated file list is not docs-only", () => {
+  const moved = [
+    {
+      filename: "docs/reference/verify-route.ts",
+      previous_filename: "apps/web/app/api/calls/[callId]/verify/route.ts",
+    },
+  ];
+  assert.equal(isDocsOnly(moved), false);
+  assert.equal(decide(profile, { ...base, files: moved }).state, "failure");
+  assert.equal(isDocsOnly([{ filename: "docs/b.md", previous_filename: "docs/a.md" }]), true);
+  assert.equal(isDocsOnly([{ filename: "docs/../apps/x.md" }]), false);
+  const listed = [{ filename: "docs/a.md" }];
+  assert.equal(decide(profile, { ...base, files: listed, filesTotal: 3001 }).state, "failure");
+  assert.equal(decide(profile, { ...base, files: listed, filesTotal: 1 }).path, "docs-only");
+});
+
+test("b. a later comment doesn't cancel an approval; a review from a deleted account is ignored", () => {
+  const reviews = [
+    review({ login: "MayankSingh1", association: "COLLABORATOR", state: "APPROVED" }),
+    review({ login: "MayankSingh1", association: "COLLABORATOR", state: "COMMENTED", at: "2026-10-13T12:00:00Z" }),
+    {
+      id: 999,
+      user: null,
+      author_association: "NONE",
+      state: "APPROVED",
+      commit_id: HEAD,
+      submitted_at: "2026-10-13T13:00:00Z",
+    },
+  ];
+  assert.equal(decide(profile, { ...base, reviews }).path, "approval");
+});

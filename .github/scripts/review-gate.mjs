@@ -36,20 +36,40 @@ const newestFirst = (left, right) =>
   String(right.submitted_at ?? "").localeCompare(String(left.submitted_at ?? "")) ||
   Number(right.id ?? 0) - Number(left.id ?? 0);
 
-export function isDocsOnly(files) {
+const isDocPath = (path) =>
+  typeof path === "string" &&
+  !path.startsWith(".github/") &&
+  !path.split("/").includes("..") &&
+  (path.startsWith("docs/") || /\.md$/i.test(path));
+
+/**
+ * True when every changed file is documentation. A rename counts only if both its old and new
+ * paths are docs (moving code into docs/ deletes it from the app), and a truncated file list
+ * (GitHub stops listing at 3000 files) never counts as docs-only.
+ * @param files [{filename, previous_filename?}] (plain path strings are accepted too)
+ * @param total the PR's changed-file count, when known
+ */
+export function isDocsOnly(files, total = files.length) {
   return (
     files.length > 0 &&
-    files.every((file) => !file.startsWith(".github/") && (file.startsWith("docs/") || /\.md$/i.test(file)))
+    files.length === total &&
+    files.every((f) => {
+      const file = typeof f === "string" ? { filename: f } : (f ?? {});
+      return isDocPath(file.filename) && (file.previous_filename == null || isDocPath(file.previous_filename));
+    })
   );
 }
 
 /**
  * @param profile the governing review profile (from main)
- * @param input {headSha, author, reviews, files, skipLabel: {addedBy, permission} | null}
+ * @param input {headSha, author, reviews, files, filesTotal, skipLabel: {addedBy, permission} | null}
  */
 export function decide(profile, input) {
   const { headSha, author } = input;
-  const reviews = (input.reviews ?? []).flat(Infinity).filter((r) => r?.commit_id === headSha);
+  // A review from a deleted account has no user; it can't attest to anything.
+  const reviews = (input.reviews ?? [])
+    .flat(Infinity)
+    .filter((r) => r?.commit_id === headSha && typeof r?.user?.login === "string");
 
   // a. Only trusted reviewers' structured reviews are considered, so a stranger posting a body
   //    with the heading can neither pass nor block the gate.
@@ -64,12 +84,12 @@ export function decide(profile, input) {
       return pass("independent-review", `Independent review: SHIP by @${structured.user.login}`);
   }
 
-  // b. Each person's latest review on this head counts; an approval later changed to
-  //    "request changes" no longer does.
+  // b. Each person's latest decisive review on this head counts, as on GitHub: an approval later
+  //    changed to "request changes" (or dismissed) no longer does, but a plain comment doesn't undo it.
   const latestByUser = new Map();
   for (const r of [...reviews].sort(newestFirst)) {
-    const login = r?.user?.login;
-    if (login && !latestByUser.has(login)) latestByUser.set(login, r);
+    if (r.state === "COMMENTED" || r.state === "PENDING") continue;
+    if (!latestByUser.has(r.user.login)) latestByUser.set(r.user.login, r);
   }
   const approver = [...latestByUser.values()].find(
     (r) => r.state === "APPROVED" && r.user.login !== author && trusted(profile, r),
@@ -82,7 +102,8 @@ export function decide(profile, input) {
     return pass("skip-label", `Review skipped by @${skip.addedBy} (${SKIP_LABEL} label)`);
 
   // d. Documentation can't change what the app does.
-  if (isDocsOnly(input.files ?? [])) return pass("docs-only", "Docs-only change");
+  const files = input.files ?? [];
+  if (isDocsOnly(files, input.filesTotal ?? files.length)) return pass("docs-only", "Docs-only change");
 
   const verdictNote = structured ? " (latest independent review is not SHIP)" : "";
   return {

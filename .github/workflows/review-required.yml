@@ -75,7 +75,11 @@ jobs:
           set -euo pipefail
           repo="/repos/$GITHUB_REPOSITORY"
           gh api --paginate --slurp "$repo/pulls/$PR/reviews" > "$RUNNER_TEMP/reviews.json"
-          gh api --paginate --slurp "$repo/pulls/$PR/files" | jq '[.[][].filename]' > "$RUNNER_TEMP/files.json"
+          # Old and new paths, so a rename out of the app can't pass as docs-only, and the PR's own
+          # file count, so a truncated list (GitHub stops at 3000 files) can't either.
+          gh api --paginate --slurp "$repo/pulls/$PR/files" \
+            | jq '[.[][] | {filename, previous_filename}]' > "$RUNNER_TEMP/files.json"
+          total=$(gh api "$repo/pulls/$PR" --jq .changed_files)
 
           # Who added the skip label (most recent "labeled" event), and their access level.
           skip='null'
@@ -93,8 +97,8 @@ jobs:
             --arg sha "$SHA" --arg author "$AUTHOR" \
             --slurpfile reviews "$RUNNER_TEMP/reviews.json" \
             --slurpfile files "$RUNNER_TEMP/files.json" \
-            --argjson skip "$skip" \
-            '{headSha: $sha, author: $author, reviews: $reviews, files: $files[0], skipLabel: $skip}' \
+            --argjson skip "$skip" --argjson total "$total" \
+            '{headSha: $sha, author: $author, reviews: $reviews, files: $files[0], filesTotal: $total, skipLabel: $skip}' \
             > "$RUNNER_TEMP/gate-input.json"
 
       - name: Decide and publish

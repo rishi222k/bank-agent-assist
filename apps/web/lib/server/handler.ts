@@ -8,6 +8,14 @@ export const DEMO_AGENT = "demo-agent";
 
 type Ctx = { params: Promise<Record<string, string>> };
 
+async function readJson(req: Request): Promise<unknown> {
+  try {
+    return await req.json();
+  } catch {
+    throw new AppError("bad_request", "Request body must be valid JSON");
+  }
+}
+
 /** Wraps a route: gives it the call service, parses the body, and maps errors to JSON responses. */
 export function route<S extends z.ZodType | undefined = undefined>(
   schema: S,
@@ -19,7 +27,7 @@ export function route<S extends z.ZodType | undefined = undefined>(
 ) {
   return async (req: Request, ctx: Ctx) => {
     try {
-      const body = schema ? schema.parse(await req.json()) : undefined;
+      const body = schema ? schema.parse(await readJson(req)) : undefined;
       const result = await fn({ service: getCallService(), params: await ctx.params, body: body as never });
       return NextResponse.json(result ?? { ok: true });
     } catch (err) {

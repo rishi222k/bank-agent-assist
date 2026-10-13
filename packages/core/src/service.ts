@@ -188,7 +188,7 @@ export class CallService {
   }
 
   async addTurn(callId: string, turn: ScriptTurn): Promise<TurnResult> {
-    const call = this.mustVerifiedCall(callId);
+    const call = this.mustActiveCall(callId);
     const stored = { ...turn, at: this.now().toISOString() };
     call.transcript.push(stored);
     if (turn.speaker !== "customer") return { turn: stored, analysis: null };
@@ -203,9 +203,11 @@ export class CallService {
   }
 
   async confirmIssue(callId: string, input: { transactionId: string; issueType: IssueType }): Promise<ConfirmResult> {
-    const call = this.mustVerifiedCall(callId);
+    const call = this.mustActiveCall(callId);
     if (input.issueType !== "unrecognised_charge")
       throw new AppError("bad_request", "Only the unrecognised-charge playbook is available in M0");
+    // One case per call in M0. Re-confirming would detach the case from what the notes describe.
+    if (call.caseId) throw new AppError("conflict", "A case has already been raised on this call");
     const transaction = this.mustOwnTransaction(call, input.transactionId);
     const eligibility = this.eligibilityFor(transaction);
 
@@ -251,8 +253,16 @@ export class CallService {
   createDispute(input: { callId: string; idempotencyKey: string; form: DisputeForm }): DisputeCreated {
     const call = this.mustVerifiedCall(input.callId);
 
+    // A retry of a request that already succeeded returns the same case, even after the call ended.
+    // The key only replays for the same call and transaction; anything else is a client bug.
     const replay = this.store.idempotent(input.idempotencyKey);
-    if (replay) return { case: this.store.getCase(replay)!, replayed: true };
+    if (replay) {
+      const existing = this.store.getCase(replay.caseId);
+      if (!existing || replay.callId !== call.id || existing.transactionId !== input.form.transactionId)
+        throw new AppError("conflict", "This idempotency key was already used for a different request");
+      return { case: existing, replayed: true };
+    }
+    this.assertActive(call);
 
     if (!call.confirmed || call.confirmed.transactionId !== input.form.transactionId)
       throw new AppError("conflict", "Confirm the transaction with the customer before raising a dispute");
@@ -301,15 +311,23 @@ export class CallService {
       createdBy: call.agentId,
       callId: call.id,
     });
-    this.store.rememberIdempotent(input.idempotencyKey, created.id);
+    this.store.rememberIdempotent(input.idempotencyKey, { callId: call.id, caseId: created.id });
     call.caseId = created.id;
+    // DSP-1.6: a card that isn't with the cardholder is treated as compromised.
+    const compromised = !input.form.cardInPossession;
     this.audit(
       call,
       "dispute.created",
-      `Dispute ${created.reference} raised for ${usd(transaction.amount)} ${transaction.merchant}`,
-      [transaction.id, created.id, ...eligibility.checks.map((c) => c.clauseId)],
+      `Dispute ${created.reference} raised for ${usd(transaction.amount)} ${transaction.merchant}` +
+        (compromised ? "; card not in customer's possession, flagged for fraud escalation" : ""),
+      [transaction.id, created.id, ...eligibility.checks.map((c) => c.clauseId), ...(compromised ? ["DSP-1.6"] : [])],
       "ok",
-      { reference: created.reference, reason: created.reason, idempotencyKey: input.idempotencyKey },
+      {
+        reference: created.reference,
+        reason: created.reason,
+        idempotencyKey: input.idempotencyKey,
+        fraudEscalation: compromised,
+      },
     );
     return { case: created, replayed: false };
   }
@@ -339,7 +357,7 @@ export class CallService {
   }
 
   saveWrapUp(callId: string, notes: string): { endedAt: string } {
-    const call = this.mustVerifiedCall(callId);
+    const call = this.mustActiveCall(callId);
     call.notes = notes;
     call.endedAt = this.now().toISOString();
     const evidence = [call.confirmed?.transactionId, call.caseId].filter((x): x is string => Boolean(x));
@@ -433,6 +451,15 @@ export class CallService {
     const call = this.mustCall(id);
     if (!call.verified) throw new AppError("not_verified", "Verify the caller before accessing account data");
     return call;
+  }
+  /** A verified call that hasn't ended. Everything that changes state goes through this. */
+  private mustActiveCall(id: string) {
+    const call = this.mustVerifiedCall(id);
+    this.assertActive(call);
+    return call;
+  }
+  private assertActive(call: CallSession) {
+    if (call.endedAt) throw new AppError("call_ended", "This call has ended. Start a new call to make changes");
   }
   private mustCustomer(id: string) {
     const c = this.store.getCustomer(id);

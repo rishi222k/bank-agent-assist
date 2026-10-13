@@ -2,6 +2,8 @@
 
 Thanks for helping. This page is everything you need to get a change into `main`.
 
+**Using an AI coding agent?** Point it at [AGENTS.md](AGENTS.md): it covers setup, the rules reviews check, and this whole process. Claude Code picks it up automatically through `CLAUDE.md`. To have an agent review someone's PR, start a fresh session and give it [.github/review/REVIEWER.md](.github/review/REVIEWER.md).
+
 ## The short version
 
 1. Work on a branch and open a pull request to `main`.
@@ -10,7 +12,7 @@ Thanks for helping. This page is everything you need to get a change into `main`
 
 | Way | How | Good for |
 | --- | --- | --- |
-| **Independent review** | The Claude reviewer posts one automatically on ready PRs from this repository. You can also ask an agent session that didn't write the change to review it, or write one yourself with the template in [`.github/review/README.md`](.github/review/README.md). It must say `VERDICT: SHIP` for the latest commit. | Changes that touch banking rules, actions, AI or data |
+| **Independent review** | The Claude reviewer posts one automatically on ready PRs from this repository. You can also have an agent session that didn't write the change review it by following [`.github/review/REVIEWER.md`](.github/review/REVIEWER.md), or write one yourself in that format. It must say `VERDICT: SHIP` for the latest commit. | Changes that touch banking rules, actions, AI or data |
 | **A collaborator's approval** | Another collaborator opens the PR → **Files changed** → **Review changes** → **Approve**. | Most changes, when someone else is around |
 | **The `skip-review` label** | Any collaborator adds the `skip-review` label to the PR. The status records who skipped it. | Typos, small or urgent fixes, or whenever you decide a review isn't worth it |
 | **Docs only** | Nothing to do: changes that only touch Markdown or `docs/` (outside `.github/`) pass automatically. | Documentation |

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { EllipsisVertical, Headset, History, Moon, RotateCcw, ShieldCheck, Sparkles, Sun } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Separator } from "@/components/ui/separator";
+import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { CallFlow } from "@/lib/use-call-flow";
 import { useTheme } from "@/lib/use-theme";
@@ -32,20 +31,19 @@ function useElapsed(startedAt: number | null, stopped: boolean) {
 
 function AiBadge({ info }: { info: CallFlow["aiInfo"] }) {
   if (!info) return null;
-  const [variant, label, hint] =
-    info.provider === "gemini"
-      ? (["ai", "Gemini", `Live model: ${info.model ?? "Gemini"}`] as const)
-      : info.provider === "mock"
-        ? (["warning", "Mock AI", "No Gemini credentials found. Offline rules keep the flow working."] as const)
-        : (["outline", "AI off", "AI is disabled. Every AI step falls back to the manual path."] as const);
+  const isGemini = info.provider === "gemini";
+  const isMock = info.provider === "mock";
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Badge variant={variant} className="hidden h-6 cursor-default sm:inline-flex">
-          <Sparkles /> {label}
-        </Badge>
+        <span className="hidden items-center gap-1.5 text-[11px] font-medium sm:inline-flex">
+          <Sparkles className={`size-3 ${isGemini ? "text-ai" : isMock ? "text-warning" : "text-muted-foreground"}`} />
+          <span className="text-muted-foreground">{isGemini ? "Gemini" : isMock ? "Mock" : "Off"}</span>
+        </span>
       </TooltipTrigger>
-      <TooltipContent className="max-w-60">{hint}</TooltipContent>
+      <TooltipContent className="max-w-60">
+        {isGemini ? `Live model: ${info.model ?? "Gemini"}` : isMock ? "Mock AI: offline rules" : "AI disabled"}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -58,15 +56,17 @@ function ThemeToggle() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-8"
+          className="size-7"
           aria-label="Toggle theme"
           onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
         >
-          <Sun className="hidden dark:block" />
-          <Moon className="dark:hidden" />
+          <Sun className="hidden size-3.5 dark:block" />
+          <Moon className="size-3.5 dark:hidden" />
         </Button>
       </TooltipTrigger>
-      <TooltipContent>Toggle theme</TooltipContent>
+      <TooltipContent>
+        Toggle theme <Kbd>T</Kbd>
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -76,39 +76,36 @@ export function Header({ flow, onOpenAudit }: { flow: CallFlow; onOpenAudit: () 
   const onCall = !!(flow.call && flow.stage);
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4">
-      <div className="flex items-center gap-2.5">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs">
-          <Headset className="size-4" />
+    <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 dark:bg-surface-elevated">
+      <div className="flex items-center gap-2">
+        <div className="flex size-6 items-center justify-center rounded bg-foreground text-background dark:bg-white dark:text-black">
+          <Headset className="size-3.5" />
         </div>
-        <div className="hidden leading-tight sm:block">
-          <div className="text-sm font-semibold tracking-tight">Bank Agent Assist</div>
-          <div className="text-[11px] text-muted-foreground">Card servicing · Everyday Bank</div>
+        <div className="hidden leading-none sm:block">
+          <div className="text-[13px] font-semibold tracking-[-0.01em]">Bank Agent Assist</div>
         </div>
       </div>
 
       {onCall && (
         <>
-          <Separator orientation="vertical" className="mx-1 hidden data-[orientation=vertical]:h-6 sm:block" />
+          <div className="mx-2 h-4 w-px bg-border" />
           <div className="flex items-center gap-2">
             {flow.ended ? (
-              <Badge variant="secondary" className="h-6">
-                Call ended
-              </Badge>
+              <span className="text-[11px] font-medium text-muted-foreground">Ended</span>
             ) : (
-              <Badge variant="outline" className="h-6 gap-1.5">
-                <span className="relative flex size-2">
+              <div className="flex items-center gap-1.5">
+                <span className="relative flex size-1.5">
                   <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60" />
-                  <span className="relative inline-flex size-2 rounded-full bg-success" />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-success" />
                 </span>
-                On call
-              </Badge>
+                <span className="text-[11px] font-medium text-success">Live</span>
+              </div>
             )}
-            <span className="font-mono text-xs text-muted-foreground tabular-nums">{elapsed}</span>
+            <span className="font-mono text-[11px] text-muted-foreground tabular-nums">{elapsed}</span>
             {flow.verified && (
-              <Badge variant="success" className="hidden h-6 md:inline-flex">
-                <ShieldCheck /> Verified
-              </Badge>
+              <span className="hidden items-center gap-1 text-[11px] font-medium text-success md:inline-flex">
+                <ShieldCheck className="size-3" />
+              </span>
             )}
           </div>
           <div className="mx-auto hidden xl:block">
@@ -117,25 +114,34 @@ export function Header({ flow, onOpenAudit }: { flow: CallFlow; onOpenAudit: () 
         </>
       )}
 
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex items-center gap-0.5">
         <AiBadge info={flow.aiInfo} />
         {flow.call && (
-          <Button variant="ghost" size="sm" onClick={onOpenAudit} className="ml-1">
-            <History /> <span className="hidden sm:inline">Audit log</span>
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-7" onClick={onOpenAudit}>
+                <History className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Audit log <Kbd>A</Kbd>
+            </TooltipContent>
+          </Tooltip>
         )}
         <ThemeToggle />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-8" aria-label="More">
-              <EllipsisVertical />
+            <Button variant="ghost" size="icon" className="size-7" aria-label="More">
+              <EllipsisVertical className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Demo controls</DropdownMenuLabel>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuLabel className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+              Demo
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={flow.actions.resetDemo}>
-              <RotateCcw /> Reset demo data
+            <DropdownMenuItem onSelect={flow.actions.resetDemo} className="text-[13px]">
+              <RotateCcw className="size-3.5" /> Reset data
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

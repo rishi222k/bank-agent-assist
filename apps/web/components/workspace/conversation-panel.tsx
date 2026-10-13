@@ -6,6 +6,7 @@ import type { ExtractedFacts } from "@baa/core";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Kbd } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -57,42 +58,51 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
       {!started && speech.supported && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              size="icon"
-              variant="outline"
-              className="size-8"
-              onClick={flow.actions.startLive}
-              aria-label="Use microphone"
-            >
-              <Mic />
+            <Button size="icon-xs" variant="outline" onClick={flow.actions.startLive} aria-label="Use microphone">
+              <Mic className="size-3" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Use microphone instead of the scripted call</TooltipContent>
         </Tooltip>
       )}
       {playing ? (
-        <Button size="sm" variant="outline" onClick={flow.actions.pause}>
-          <Pause /> Pause
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="xs" variant="outline" onClick={flow.actions.pause} className="gap-1">
+              <Pause className="size-3" /> Pause
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Pause <Kbd>Space</Kbd>
+          </TooltipContent>
+        </Tooltip>
       ) : (
-        <Button size="sm" onClick={flow.actions.play}>
-          <Play /> {started ? "Resume" : "Play call"}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="xs" onClick={flow.actions.play} className="gap-1">
+              <Play className="size-3" /> {started ? "Resume" : "Play"}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {started ? "Resume" : "Play call"} <Kbd>Space</Kbd>
+          </TooltipContent>
+        </Tooltip>
       )}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            size="icon"
+            size="icon-xs"
             variant="outline"
-            className="size-8"
             onClick={flow.actions.step}
             disabled={playing}
             aria-label={interim ? "Finish this line" : "Next line"}
           >
-            <SkipForward />
+            <SkipForward className="size-3" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{interim ? "Finish this line" : "Next line"}</TooltipContent>
+        <TooltipContent>
+          {interim ? "Finish this line" : "Next line"} <Kbd>→</Kbd>
+        </TooltipContent>
       </Tooltip>
     </>
   );
@@ -103,11 +113,12 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
         {scriptControls}
         {live && !flow.wrapUpRequested && (
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
+            className="gap-1"
             onClick={speech.listening ? flow.actions.pauseLive : flow.actions.resumeLive}
           >
-            {speech.listening ? <MicOff /> : <Mic />}
+            {speech.listening ? <MicOff className="size-3" /> : <Mic className="size-3" />}
             {speech.listening ? "Pause mic" : "Resume mic"}
           </Button>
         )}
@@ -120,18 +131,18 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
           const el = e.currentTarget;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
         }}
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
+        className="min-h-0 flex-1 overflow-y-auto bg-background px-3 py-3 lg:px-4 dark:bg-surface-sunken"
       >
         {!started ? (
-          <Empty className="h-full">
+          <Empty className="h-full border-0 bg-transparent">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <AudioLines />
+                <AudioLines className="size-5" />
               </EmptyMedia>
-              <EmptyTitle className="text-base">
+              <EmptyTitle className="text-[14px]">
                 {!verified ? "Waiting for verification" : live ? "Listening" : "Ready to play the call"}
               </EmptyTitle>
-              <EmptyDescription>
+              <EmptyDescription className="text-[13px]">
                 {!verified
                   ? "Verify the caller first. The transcript starts once their identity is confirmed."
                   : live
@@ -141,8 +152,8 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
             </EmptyHeader>
           </Empty>
         ) : (
-          <div className="mx-auto max-w-2xl">
-            <div role="log" aria-live="polite" aria-label="Call transcript" className="space-y-3">
+          <div>
+            <div role="log" aria-live="polite" aria-label="Call transcript" className="space-y-1">
               {blocks.map((b, i) => (
                 <TranscriptBlock
                   key={i}
@@ -154,7 +165,7 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
               ))}
             </div>
             {scriptDone && (
-              <div className="mt-6 flex items-center gap-3 text-[11px] text-muted-foreground">
+              <div className="mt-3 flex items-center gap-2 px-2 py-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                 <span className="h-px flex-1 bg-border" />
                 End of scripted call
                 <span className="h-px flex-1 bg-border" />
@@ -176,7 +187,7 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
 function LiveBar({ flow }: { flow: CallFlow }) {
   const customer = flow.context?.customer.name ?? "Customer";
   return (
-    <div className="shrink-0 space-y-2 border-b bg-surface px-4 py-2.5 sm:px-6">
+    <div className="shrink-0 space-y-2 border-b border-border bg-surface px-3 py-2 lg:px-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="text-xs text-muted-foreground">Who is speaking?</span>
         <ToggleGroup
@@ -264,14 +275,14 @@ function TranscriptBlock({
         agent ? "border-muted-foreground/30" : "border-ai bg-ai-soft/40",
       )}
     >
-      <h3 className="mb-0.5 flex items-center gap-1.5 text-xs font-semibold">
+      <h3 className="mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
         <span className="truncate">{agent ? "Agent" : customerName}</span>
         {agent && <span className="font-normal text-muted-foreground">· you</span>}
         <time className="ml-auto pl-2 font-mono text-[11px] font-normal text-muted-foreground tabular-nums">
           {time}
         </time>
       </h3>
-      <p className={cn("text-[15px] leading-7 text-pretty", agent ? "text-foreground/70" : "text-foreground")}>
+      <p className={cn("text-[14px] leading-relaxed text-pretty", agent ? "text-foreground/80" : "text-foreground")}>
         {block.lines.map((line, i) => (
           <span key={i}>
             {i > 0 && " "}
@@ -330,12 +341,12 @@ function DetailsHeard({ flow }: { flow: CallFlow }) {
   const found = rows.filter((r) => r.value).length;
 
   return (
-    <section className="shrink-0 border-t bg-surface">
+    <section className="shrink-0 border-t border-border bg-surface dark:bg-surface-elevated">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center gap-2 px-4 text-left outline-none hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset sm:px-6"
+        className="flex h-10 w-full items-center gap-2 px-3 text-left outline-none hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset lg:px-4"
       >
         <AiLabel>Details heard</AiLabel>
         <span className="text-xs text-muted-foreground">
@@ -352,7 +363,7 @@ function DetailsHeard({ flow }: { flow: CallFlow }) {
         />
       </button>
       {open && (
-        <div className="px-4 pb-4 sm:px-6">
+        <div className="px-3 pb-3 lg:px-4">
           {extractError && !facts ? (
             <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
               <CircleAlert className="mt-px size-3.5 shrink-0 text-warning" />

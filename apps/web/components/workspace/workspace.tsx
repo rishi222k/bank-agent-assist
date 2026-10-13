@@ -21,28 +21,28 @@ export function Workspace() {
 
   return (
     <EvidenceProvider refs={flow.context?.evidence ?? []}>
-      <div className="flex h-dvh flex-col bg-surface">
+      <div className="flex h-dvh flex-col bg-background dark:bg-surface-sunken">
         <Header flow={flow} onOpenAudit={() => setAuditOpen(true)} />
         {!flow.call || !flow.stage ? (
           <StartScreen flow={flow} />
         ) : (
           <>
-            <div className="border-b bg-background px-4 py-2.5 xl:hidden">
+            <div className="border-b border-border bg-surface px-4 py-2 xl:hidden">
               <CompactStepper stage={flow.stage} />
             </div>
-            <main className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)_minmax(300px,340px)] lg:overflow-hidden xl:grid-cols-[minmax(300px,360px)_minmax(0,1fr)_minmax(360px,420px)]">
-              <Column className="lg:border-r">
+            <main className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)_minmax(320px,380px)] lg:overflow-hidden">
+              <Column className="border-border lg:border-r">
                 <PanelHeader
                   icon={UserRound}
                   title="Customer"
-                  meta={flow.verified ? "Verified caller" : "Awaiting verification"}
+                  meta={flow.verified ? "Verified" : "Awaiting verification"}
                 />
                 <ColumnBody>{flow.verified ? <CustomerPanel flow={flow} /> : <VerifyPanel flow={flow} />}</ColumnBody>
               </Column>
-              <Column className="h-[560px] bg-background lg:h-auto">
+              <Column className="h-[560px] border-border lg:h-auto">
                 <ConversationPanel flow={flow} />
               </Column>
-              <Column className="lg:border-l">
+              <Column className="border-border lg:border-l">
                 <PanelHeader icon={Sparkles} title="Co-pilot" meta={copilotMeta(flow)} />
                 <ColumnBody>
                   <CopilotPanel flow={flow} />
@@ -63,29 +63,29 @@ export function Workspace() {
 }
 
 function Column({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <section className={cn("flex flex-col border-b lg:min-h-0 lg:border-b-0", className)}>{children}</section>;
+  return <section className={cn("flex flex-col bg-surface lg:min-h-0 dark:bg-surface", className)}>{children}</section>;
 }
 
 function ColumnBody({ children }: { children: React.ReactNode }) {
-  return <div className="p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">{children}</div>;
+  return <div className="p-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:p-4">{children}</div>;
 }
 
 function copilotMeta(flow: CallFlow) {
   switch (flow.stage) {
     case "verify":
-      return "Starts after verification";
+      return "Standby";
     case "brief":
-      return "Ready to listen";
+      return "Ready";
     case "listen":
       return "Listening";
     case "confirm":
       return "Match found";
     case "act":
-      return flow.createdCase ? "Case created" : "Recommendation ready";
+      return flow.createdCase ? "Case created" : "Recommendation";
     case "wrapup":
       return "Wrap-up";
     case "done":
-      return "Call complete";
+      return "Complete";
     default:
       return undefined;
   }

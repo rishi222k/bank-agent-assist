@@ -31,6 +31,8 @@ jobs:
       # guard fails here, before any reviewer spends a round on it.
       - name: Review gate
         run: node --test .github/scripts/validate-review-profile.test.mjs
+      - name: Review gate decision
+        run: node --test .github/scripts/review-gate.test.mjs
       - name: Review profile
         run: node .github/scripts/validate-review-profile.mjs .github/review/bank-agent-assist-software-review-v1.json --profile-id bank-agent-assist-software
       # Format, lint, typecheck and unit tests.

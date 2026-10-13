@@ -7,5 +7,5 @@ docs/reference
 # Hand-laid-out data: one record per line reads better than Prettier's layout.
 data/**/*.json
 .github/rulesets/*.json
-# Review gate scripts are shared verbatim with the repo-setup template; keep them byte-identical.
-.github/scripts/*.mjs
+# The review-profile validator comes from the repo-setup template; keep its layout close to it.
+.github/scripts/validate-review-profile*.mjs

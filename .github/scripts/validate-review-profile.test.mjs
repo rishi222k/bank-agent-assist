@@ -175,6 +175,29 @@ test("rejects an untrusted GitHub review author", async () => {
   await expectExit(1, () => validateReviewSet(profile, file, "abc123"));
 });
 
+test("ignores a stranger's newer look-alike review", async () => {
+  const { root, profile } = await fixture();
+  const file = await reviewFile(root, [
+    {
+      id: 1,
+      user: { login: "repository-collaborator" },
+      author_association: "COLLABORATOR",
+      commit_id: "abc123",
+      submitted_at: "2026-08-27T10:00:00Z",
+      body: body({ reviewer: "repository-collaborator" }),
+    },
+    {
+      id: 2,
+      user: { login: "drive-by" },
+      author_association: "NONE",
+      commit_id: "abc123",
+      submitted_at: "2026-08-27T11:00:00Z",
+      body: "## Test Software Review\nnot a real review",
+    },
+  ]);
+  await expectExit(0, () => validateReviewSet(profile, file, "abc123"));
+});
+
 test("accepts an authorized collaborator independent of review producer", async () => {
   const { root, profile } = await fixture();
   const file = await reviewFile(root, [{

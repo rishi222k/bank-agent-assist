@@ -17,7 +17,8 @@ those risks; it is not a copy of another repository's checklist.
 - `SHIP` on the current head is an absolute stop.
 - After three substantive reviewed revisions without convergence, stop and
   escalate the underlying design or process problem to Rishi.
-- Never merge, close, approve, request changes, or bypass branch protection.
+- A reviewer never merges, closes, approves, requests changes, or bypasses
+  branch protection. Collaborators decide merges.
 
 `BLOCKING` means merging would create a material security, privacy, data-loss,
 data-integrity, correctness or contract failure. A real risk that no checklist
@@ -83,13 +84,33 @@ to the evidence, not the tool.
 | --- | --- | --- |
 | `ci` | Review-gate tests and profile, format, lint, typecheck, unit tests, build and production dependency audit (`npm run check` plus build and audit) | Yes |
 | `secrets` | No credential in the PR's history | Yes |
-| `review-required` | A trusted, complete review exists for the exact head | Yes |
+| `review-required` | Review evidence for the exact head, by any path below | Yes |
 | `Remote Independent Review` | Claude produced a review (one possible producer) | No — producer health only |
 
-The Claude reviewer runs automatically on ready pull requests into `main` and
-can be dispatched by hand for any PR. It never becomes a required check, so its
-quota or credentials can never block a merge. `review-required` is published as
-a commit status for the exact head after every push and every review.
+### How `review-required` passes
+
+Collaborators choose how much review a change needs, so nobody is locked out.
+`.github/scripts/review-gate.mjs` passes the PR on **any one** of:
+
+1. **Independent review:** the newest review in the evidence format above from
+   a trusted login or collaborator, for the exact head, with `VERDICT: SHIP`.
+   A `FIX_FIRST` or `REWORK` review does not pass. Reviews from anyone else
+   are ignored, so on a public repository a stranger can neither pass nor
+   block the gate.
+2. **Approval:** a GitHub "Approve" on the exact head from a collaborator who
+   isn't the PR author (their latest review on that head).
+3. **`skip-review` label:** added by someone with write access. The status
+   names who skipped review, so the choice is visible.
+4. **Docs only:** every file changed by the exact head commit (old and new
+   paths) is Markdown or under `docs/`, nothing is under `.github/`, and no
+   agent-instruction file (`AGENTS.md`, `CLAUDE.md`) changes.
+
+The Claude reviewer runs automatically on ready pull requests from branches in
+this repository and can be dispatched by hand. It refuses fork PRs, because it
+installs the PR's dependencies on the runner that holds its credential. It
+never becomes a required check, so its quota or credentials can never block a
+merge. `review-required` runs on `pull_request_target` so it can publish a
+status on fork PRs too; it never checks out or runs PR code.
 
 ## Maintenance
 
@@ -100,7 +121,7 @@ weaken the policy used to review itself.
 Run:
 
 ```sh
-node --test .github/scripts/validate-review-profile.test.mjs
+node --test .github/scripts/validate-review-profile.test.mjs .github/scripts/review-gate.test.mjs
 node .github/scripts/validate-review-profile.mjs \
   .github/review/bank-agent-assist-software-review-v1.json \
   --profile-id bank-agent-assist-software

@@ -59,7 +59,7 @@ docs/              Scope, M0 flow, brainstorm, references, screenshots
 
 ## Contributing
 
-Work on a branch and open a pull request to `main`. CI (format, lint, typecheck, tests, build, dependency audit) must pass and one approval is needed. Dependabot opens weekly grouped dependency updates. See [.github/rulesets](.github/rulesets/README.md) for the branch protection setup.
+Work on a branch and open a pull request to `main`. Three checks must pass: `ci`, `secrets` and `review-required`. The review check can be satisfied by an independent review, another collaborator's approval, or the `skip-review` label: see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Dependabot opens weekly grouped dependency updates. Branch protection: [.github/rulesets](.github/rulesets/README.md).
 
 ## Docs
 

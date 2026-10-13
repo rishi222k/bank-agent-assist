@@ -86,9 +86,14 @@ export function VerifyPanel({ flow }: { flow: CallFlow }) {
                 <AlertTitle className="text-[13px]">{verify.locked ? "Locked" : "Failed"}</AlertTitle>
                 <AlertDescription className="text-[13px]">
                   {verify.error}
-                  {!verify.locked && ` ${verify.attemptsLeft} left.`}
+                  {!verify.locked && ` ${verify.attemptsLeft} attempt${verify.attemptsLeft === 1 ? "" : "s"} left.`}
                 </AlertDescription>
               </Alert>
+            )}
+            {verify.locked && (
+              <Button type="button" variant="outline" size="sm" className="w-full" onClick={flow.actions.newCall}>
+                End call
+              </Button>
             )}
 
             <Tooltip>

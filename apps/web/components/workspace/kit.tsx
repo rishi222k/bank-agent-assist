@@ -18,7 +18,7 @@ export function PanelHeader({
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 dark:bg-surface-elevated">
       <Icon className="size-3.5 text-muted-foreground" />
-      <h2 className="text-[13px] font-medium text-foreground">{title}</h2>
+      <h2 className="shrink-0 text-[13px] font-medium text-foreground">{title}</h2>
       {meta && (
         <span className="truncate text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{meta}</span>
       )}

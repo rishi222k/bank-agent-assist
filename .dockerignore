@@ -1,0 +1,8 @@
+.git
+**/node_modules
+**/.next
+**/.env*
+!apps/web/.env.example
+docs
+*.md
+.github

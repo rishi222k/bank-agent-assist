@@ -27,7 +27,9 @@ import type {
   WrapUp,
 } from "./schemas";
 
+/** Failed verifications allowed per customer within the lock window, across all calls. */
 const MAX_VERIFY_ATTEMPTS = 3;
+const VERIFY_LOCK_WINDOW_MS = 15 * 60 * 1000;
 const DISPUTE_POLICY_ID = "DSP-1";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +46,7 @@ export type CallStarted = {
   callId: string;
   scenario: { id: string; title: string; summary: string };
   caller: { phone: string; maskedName: string; maskedCard: string };
+  verification: { attemptsLeft: number; locked: boolean };
   script: ScriptTurn[];
   ai: { provider: AiProvider["name"]; model: string | null };
 };
@@ -119,6 +122,7 @@ export class CallService {
       eligibility: null,
       caseId: null,
       notes: null,
+      wrapUpStartedAt: null,
     };
     this.store.insertCall(call);
     this.audit(call, "call.started", `Incoming call from ${scenario.callerPhone}`);
@@ -131,40 +135,58 @@ export class CallService {
         maskedName: maskName(customer.name),
         maskedCard: `•••• ${card.last4.slice(-2).padStart(4, "•")}`,
       },
+      verification: this.verificationState(customer.id),
       script: scenario.turns,
       ai: this.aiInfo,
     };
   }
 
+  /**
+   * Checks the caller's answers. Failures count per customer across calls, so hanging up and
+   * calling back doesn't reset the limit: after MAX_VERIFY_ATTEMPTS failures in the window the
+   * customer is locked until the window passes (or the demo is reset).
+   */
   verifyCaller(callId: string, answer: { dob: string; last4: string }): VerifyResult {
     const call = this.mustCall(callId);
-    if (call.verified)
-      return { verified: true, attemptsLeft: MAX_VERIFY_ATTEMPTS - call.verifyAttempts, locked: false };
-    if (call.verifyAttempts >= MAX_VERIFY_ATTEMPTS)
-      throw new AppError("verification_locked", "Too many failed attempts. Escalate to a team lead.");
+    if (call.verified) return { verified: true, ...this.verificationState(call.customerId) };
+    this.assertActive(call, "Verification");
+    if (this.verificationState(call.customerId).locked) {
+      this.audit(call, "caller.verification_locked", "Verification refused: customer is locked", [], "rejected");
+      throw new AppError("verification_locked", "Too many failed attempts for this customer. Escalate to a team lead.");
+    }
 
     const customer = this.mustCustomer(call.customerId);
     const card = this.mustCard(call.cardId);
     call.verifyAttempts++;
     const ok = answer.dob === customer.dob && answer.last4 === card.last4;
-    const attemptsLeft = MAX_VERIFY_ATTEMPTS - call.verifyAttempts;
 
     if (ok) {
       call.verified = true;
+      this.store.clearVerificationFailures(customer.id);
       this.audit(call, "caller.verified", "Caller verified with date of birth and last 4 digits", [
         customer.id,
         card.id,
       ]);
-    } else {
-      this.audit(
-        call,
-        "caller.verification_failed",
-        `Verification failed (${attemptsLeft} attempts left)`,
-        [],
-        "rejected",
-      );
+      return { verified: true, ...this.verificationState(customer.id) };
     }
-    return { verified: ok, attemptsLeft, locked: !ok && attemptsLeft === 0 };
+
+    this.store.recordVerificationFailure(customer.id, this.now().toISOString());
+    const state = this.verificationState(customer.id);
+    this.audit(
+      call,
+      "caller.verification_failed",
+      `Verification failed (${state.attemptsLeft} attempt${state.attemptsLeft === 1 ? "" : "s"} left)`,
+      [],
+      "rejected",
+    );
+    return { verified: false, ...state };
+  }
+
+  private verificationState(customerId: string) {
+    const since = this.now().getTime() - VERIFY_LOCK_WINDOW_MS;
+    const recent = this.store.verificationFailures(customerId).filter((at) => new Date(at).getTime() > since);
+    const attemptsLeft = Math.max(0, MAX_VERIFY_ATTEMPTS - recent.length);
+    return { attemptsLeft, locked: attemptsLeft === 0 };
   }
 
   getContext(callId: string): CallContext {
@@ -188,7 +210,7 @@ export class CallService {
   }
 
   async addTurn(callId: string, turn: ScriptTurn): Promise<TurnResult> {
-    const call = this.mustVerifiedCall(callId);
+    const call = this.mustActiveCall(callId, "Transcript turn");
     const stored = { ...turn, at: this.now().toISOString() };
     call.transcript.push(stored);
     if (turn.speaker !== "customer") return { turn: stored, analysis: null };
@@ -203,9 +225,17 @@ export class CallService {
   }
 
   async confirmIssue(callId: string, input: { transactionId: string; issueType: IssueType }): Promise<ConfirmResult> {
-    const call = this.mustVerifiedCall(callId);
+    const call = this.mustActiveCall(callId, "Confirm transaction");
     if (input.issueType !== "unrecognised_charge")
-      throw new AppError("bad_request", "Only the unrecognised-charge playbook is available in M0");
+      this.refuse(
+        call,
+        "Confirm transaction",
+        new AppError("bad_request", "Only the unrecognised-charge playbook is available in M0"),
+      );
+    // One case per call in M0. Re-confirming would detach the case from what the notes describe.
+    if (call.caseId)
+      this.refuse(call, "Confirm transaction", new AppError("conflict", "A case has already been raised on this call"));
+    this.assertNotWrappingUp(call, "Confirm transaction");
     const transaction = this.mustOwnTransaction(call, input.transactionId);
     const eligibility = this.eligibilityFor(transaction);
 
@@ -249,13 +279,33 @@ export class CallService {
 
   /** The only path that creates a case. Re-checks everything server-side; never driven by AI output. */
   createDispute(input: { callId: string; idempotencyKey: string; form: DisputeForm }): DisputeCreated {
-    const call = this.mustVerifiedCall(input.callId);
+    const call = this.mustCall(input.callId);
+    if (!call.verified)
+      this.refuse(call, "Dispute", new AppError("not_verified", "Verify the caller before accessing account data"));
 
+    // A retry of a request that already succeeded returns the same case, even after the call ended.
+    // The key only replays for the same call and transaction; anything else is a client bug.
     const replay = this.store.idempotent(input.idempotencyKey);
-    if (replay) return { case: this.store.getCase(replay)!, replayed: true };
+    if (replay) {
+      const existing = this.store.getCase(replay.caseId);
+      if (!existing || replay.callId !== call.id || existing.transactionId !== input.form.transactionId)
+        this.refuse(
+          call,
+          "Dispute",
+          new AppError("conflict", "This idempotency key was already used for a different request"),
+        );
+      return { case: existing, replayed: true };
+    }
+    this.assertActive(call, "Dispute");
+    this.assertNotWrappingUp(call, "Dispute");
 
     if (!call.confirmed || call.confirmed.transactionId !== input.form.transactionId)
-      throw new AppError("conflict", "Confirm the transaction with the customer before raising a dispute");
+      this.refuse(
+        call,
+        "Dispute",
+        new AppError("conflict", "Confirm the transaction with the customer before raising a dispute"),
+        [input.form.transactionId],
+      );
 
     const transaction = this.mustOwnTransaction(call, input.form.transactionId);
     const eligibility = this.eligibilityFor(transaction);
@@ -301,21 +351,31 @@ export class CallService {
       createdBy: call.agentId,
       callId: call.id,
     });
-    this.store.rememberIdempotent(input.idempotencyKey, created.id);
+    this.store.rememberIdempotent(input.idempotencyKey, { callId: call.id, caseId: created.id });
     call.caseId = created.id;
+    // DSP-1.6: a card that isn't with the cardholder is treated as compromised.
+    const compromised = !input.form.cardInPossession;
     this.audit(
       call,
       "dispute.created",
-      `Dispute ${created.reference} raised for ${usd(transaction.amount)} ${transaction.merchant}`,
-      [transaction.id, created.id, ...eligibility.checks.map((c) => c.clauseId)],
+      `Dispute ${created.reference} raised for ${usd(transaction.amount)} ${transaction.merchant}` +
+        (compromised ? "; card not in customer's possession, flagged for fraud escalation" : ""),
+      [transaction.id, created.id, ...eligibility.checks.map((c) => c.clauseId), ...(compromised ? ["DSP-1.6"] : [])],
       "ok",
-      { reference: created.reference, reason: created.reason, idempotencyKey: input.idempotencyKey },
+      {
+        reference: created.reference,
+        reason: created.reason,
+        idempotencyKey: input.idempotencyKey,
+        fraudEscalation: compromised,
+      },
     );
     return { case: created, replayed: false };
   }
 
   async getWrapUpDraft(callId: string): Promise<AiResult<WrapUp>> {
     const call = this.mustVerifiedCall(callId);
+    // From here the notes describe the call, so no new action may change what they describe.
+    if (!call.endedAt) call.wrapUpStartedAt ??= this.now().toISOString();
     const createdCase = call.caseId ? (this.store.getCase(call.caseId) ?? null) : null;
     const transaction = call.confirmed ? (this.store.getTransaction(call.confirmed.transactionId) ?? null) : null;
     return this.runAi(
@@ -339,8 +399,11 @@ export class CallService {
   }
 
   saveWrapUp(callId: string, notes: string): { endedAt: string } {
-    const call = this.mustVerifiedCall(callId);
-    call.notes = notes;
+    const call = this.mustActiveCall(callId, "Save notes");
+    // The saved notes always carry the case reference, even if the agent edited it out.
+    const createdCase = call.caseId ? this.store.getCase(call.caseId) : undefined;
+    call.notes =
+      createdCase && !notes.includes(createdCase.reference) ? `Case ${createdCase.reference}.\n${notes}` : notes;
     call.endedAt = this.now().toISOString();
     const evidence = [call.confirmed?.transactionId, call.caseId].filter((x): x is string => Boolean(x));
     this.audit(call, "call.wrapped_up", "Call notes saved and call ended", evidence);
@@ -426,13 +489,43 @@ export class CallService {
 
   private mustCall(id: string) {
     const call = this.store.getCall(id);
-    if (!call) throw new AppError("not_found", "Call not found");
+    if (!call) throw new AppError("call_not_found", "This call no longer exists. Start a new call.");
     return call;
   }
   private mustVerifiedCall(id: string) {
     const call = this.mustCall(id);
     if (!call.verified) throw new AppError("not_verified", "Verify the caller before accessing account data");
     return call;
+  }
+  /**
+   * A verified call that hasn't ended. Everything that changes state goes through this, and a
+   * refusal is written to the audit log like any other attempted action.
+   */
+  private mustActiveCall(id: string, action: string) {
+    const call = this.mustCall(id);
+    if (!call.verified)
+      this.refuse(call, action, new AppError("not_verified", "Verify the caller before accessing account data"));
+    this.assertActive(call, action);
+    return call;
+  }
+  private assertNotWrappingUp(call: CallSession, action: string) {
+    if (call.wrapUpStartedAt)
+      this.refuse(
+        call,
+        action,
+        new AppError("conflict", "Wrap-up has started on this call. Start a new call to raise a case"),
+      );
+  }
+  private assertActive(call: CallSession, action: string) {
+    if (call.endedAt)
+      this.refuse(call, action, new AppError("call_ended", "This call has ended. Start a new call to make changes"));
+  }
+  /** Records a refused attempt, then throws. */
+  private refuse(call: CallSession, action: string, error: AppError, evidenceIds: string[] = []): never {
+    this.audit(call, "action.refused", `${action} refused: ${error.message}`, evidenceIds, "rejected", {
+      code: error.code,
+    });
+    throw error;
   }
   private mustCustomer(id: string) {
     const c = this.store.getCustomer(id);
@@ -460,9 +553,36 @@ function maskName(name: string) {
     .join(" ");
 }
 
-// One service per server process. Kept on globalThis so dev hot-reloads don't wipe the demo state.
-const g = globalThis as unknown as { __baaService?: CallService };
-export function getCallService(): CallService {
-  g.__baaService ??= new CallService(new MemoryStore(), createAiProvider());
-  return g.__baaService;
+// ---------------------------------------------------------------------------
+// Demo sandboxes
+// ---------------------------------------------------------------------------
+
+const SANDBOX_IDLE_MS = 2 * 60 * 60 * 1000;
+const MAX_SANDBOXES = 200;
+
+type Sandbox = { service: CallService; lastUsed: number };
+
+// Kept on globalThis so dev hot-reloads don't wipe the demo state. Restart `npm run dev` after
+// changing this package: existing sandboxes keep the old code.
+const g = globalThis as unknown as { __baaSandboxes?: Map<string, Sandbox>; __baaAi?: AiProvider };
+
+/**
+ * One isolated demo per visitor: each sandbox has its own calls, cases and audit log, so one
+ * person's Reset (or test data) never touches another's. Sandboxes live in this server's memory,
+ * expire after two idle hours, and the least recently used is evicted beyond MAX_SANDBOXES.
+ */
+export function getCallService(sandboxId: string, now: number = Date.now()): CallService {
+  const sandboxes = (g.__baaSandboxes ??= new Map());
+  for (const [id, s] of sandboxes) if (now - s.lastUsed > SANDBOX_IDLE_MS) sandboxes.delete(id);
+
+  let sandbox = sandboxes.get(sandboxId);
+  if (sandbox) sandboxes.delete(sandboxId);
+  else {
+    // Map iteration is insertion order, and every use re-inserts: the first key is the least recently used.
+    if (sandboxes.size >= MAX_SANDBOXES) sandboxes.delete(sandboxes.keys().next().value!);
+    sandbox = { service: new CallService(new MemoryStore(), (g.__baaAi ??= createAiProvider())), lastUsed: now };
+  }
+  sandbox.lastUsed = now;
+  sandboxes.set(sandboxId, sandbox);
+  return sandbox.service;
 }

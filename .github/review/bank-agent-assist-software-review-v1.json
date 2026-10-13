@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "reviewSchema": "bank-agent-assist-software-review-v1",
+  "profileId": "bank-agent-assist-software",
+  "heading": "Bank Agent Assist Software Review",
+  "trustedReviewers": ["claude[bot]", "rishi222k"],
+  "trustedAuthorAssociations": ["OWNER", "MEMBER", "COLLABORATOR"],
+  "verdicts": ["SHIP", "FIX_FIRST", "REWORK"],
+  "sources": [
+    {
+      "id": "BA-PROTECT",
+      "path": ".github/review/README.md",
+      "anchor": "## What Bank Agent Assist must protect",
+      "guards": [
+        "**The model never decides or acts.**",
+        "AI output is advice: it is never the input that triggers an\n  action endpoint.",
+        "**Every action needs a verified caller and the agent's explicit approval.**",
+        "The server re-checks verification, call state, the confirmed transaction and\n  eligibility before it executes, whatever the client sent.",
+        "**Actions are idempotent and never report a false success.**",
+        "**Account data stays masked until the caller is verified.**",
+        "**Evidence or it didn't happen.**",
+        "**Every state change is audited.**",
+        "**An AI failure degrades, never blocks.**",
+        "**Everything is fictional and secrets stay on the server.**",
+        "**A refactor must not remove a demo path or change what appears on screen\n  unless the PR says it opts in.**"
+      ],
+      "description": "Bank Agent Assist's material failure modes: AI autonomy, action gating, idempotency, masking, evidence, audit, AI fallback, secrets and demo paths."
+    },
+    {
+      "id": "BA-GUARDRAILS",
+      "path": "docs/SCOPE.md",
+      "anchor": "## 8. Guardrails that apply to every feature",
+      "guards": [
+        "**Gemini reads, code decides.**",
+        "**Structured output only.** Every Gemini call returns JSON validated against a shared schema.",
+        "**Evidence or it didn't happen.** Every AI claim cites record IDs (transaction, policy clause, case). The backend drops any reference that doesn't exist.",
+        "**The agent approves every action.**",
+        "**Everything is fictional.**"
+      ],
+      "description": "The product guardrails every feature follows, from the agreed scope."
+    },
+    {
+      "id": "BA-EXCEPTIONS",
+      "path": "docs/SCOPE.md",
+      "anchor": "**Exception paths**",
+      "guards": [
+        "| X-01 | Caller fails verification |",
+        "| X-02 | Dispute already exists |",
+        "| X-06 | Gemini error, timeout or invalid JSON |",
+        "| X-07 | Action fails or times out | Pending/failed state, status re-checked before retry, never a false success |"
+      ],
+      "description": "Defined behaviour for each exception path the demo must keep."
+    },
+    {
+      "id": "BA-CI",
+      "path": ".github/workflows/ci.yml",
+      "anchor": "name: CI",
+      "guards": [
+        "permissions:\n  contents: read",
+        "run: npm run check",
+        "run: node --test .github/scripts/validate-review-profile.test.mjs"
+      ],
+      "description": "Credential-free, least-privilege required checks."
+    },
+    {
+      "id": "BA-REVIEW",
+      "path": ".github/review/README.md",
+      "anchor": "## Loop contract",
+      "guards": [
+        "Only a concrete `BLOCKING` finding prevents `SHIP`",
+        "After three substantive reviewed revisions without convergence"
+      ],
+      "description": "Severity, convergence and stopping rules."
+    }
+  ],
+  "checklist": [
+    {
+      "id": "BA-AI-NEVER-DECIDES",
+      "sources": ["BA-PROTECT", "BA-GUARDRAILS"],
+      "question": "Are eligibility, allowed actions and every money-touching decision still made by deterministic code, with no path where AI output (facts, recommendation, prefill) triggers or authorises an action?"
+    },
+    {
+      "id": "BA-ACTION-GATE",
+      "sources": ["BA-PROTECT", "BA-GUARDRAILS"],
+      "question": "Does every action endpoint re-check, server-side, a verified and still-active call, the agent-confirmed transaction and eligibility, and refuse anything outside the allowlist regardless of what the client sends?"
+    },
+    {
+      "id": "BA-IDEMPOTENCY",
+      "sources": ["BA-PROTECT", "BA-EXCEPTIONS"],
+      "question": "Are actions idempotent per call and transaction, are duplicate cases refused (X-02), and does a failed, timed-out or pending action surface as such rather than as success (X-07)?"
+    },
+    {
+      "id": "BA-MASKING",
+      "sources": ["BA-PROTECT", "BA-EXCEPTIONS"],
+      "question": "Can any endpoint, prompt or UI state expose customer, card, transaction or case data for a call that is not verified, including after failed or locked verification (X-01)?"
+    },
+    {
+      "id": "BA-EVIDENCE",
+      "sources": ["BA-PROTECT", "BA-GUARDRAILS"],
+      "question": "Does every AI statement shown to the agent carry evidence IDs that the backend verified exist for this call, with unknown IDs dropped and the drop surfaced?"
+    },
+    {
+      "id": "BA-AUDIT",
+      "sources": ["BA-PROTECT"],
+      "question": "Is every state change and every refused attempt written to the audit log with actor, type, evidence IDs and result, and does nothing change state without an audit event?"
+    },
+    {
+      "id": "BA-AI-FALLBACK",
+      "sources": ["BA-PROTECT", "BA-GUARDRAILS", "BA-EXCEPTIONS"],
+      "question": "Is every AI response validated against its shared schema, and does an AI error, timeout or invalid output leave the call usable through the manual path (X-06) without inventing data?"
+    },
+    {
+      "id": "BA-HONEST-UI",
+      "sources": ["BA-PROTECT", "BA-EXCEPTIONS"],
+      "question": "Do loading, error, empty, pending and AI-unavailable states tell the agent the truth, with Mock AI and live Gemini clearly labelled and no success shown before the server confirms it?"
+    },
+    {
+      "id": "BA-SECRETS-AND-DATA",
+      "sources": ["BA-PROTECT", "BA-GUARDRAILS"],
+      "question": "Is all data synthetic and labelled as demo data, and do API keys and credentials stay server-side, out of the client bundle, logs, docs, CI and the PR?"
+    },
+    {
+      "id": "BA-DEMO-PATHS",
+      "sources": ["BA-PROTECT", "BA-EXCEPTIONS"],
+      "question": "Do the scripted scenarios and every built exception path still work end to end, with no feature removed or screen changed unless the PR says it opts in?"
+    },
+    {
+      "id": "BA-A11Y-RESPONSIVE",
+      "sources": ["BA-PROTECT"],
+      "question": "Do changed UI surfaces stay keyboard-operable, labelled for assistive technology, readable in light and dark themes, and usable from phone width up?"
+    },
+    {
+      "id": "BA-DETERMINISTIC-VERIFICATION",
+      "sources": ["BA-CI", "BA-REVIEW"],
+      "question": "Do the relevant owned checks genuinely run without secrets, with new behavior covered by a test where one can prove it and skipped checks reported as skipped?"
+    },
+    {
+      "id": "BA-SCOPE",
+      "sources": ["BA-PROTECT", "BA-REVIEW"],
+      "question": "Does the change stay within its stated scope, with no unrelated cleanup, undocumented behavior change, or new dependency without a reason?"
+    }
+  ]
+}

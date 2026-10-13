@@ -32,6 +32,8 @@ export type CallSession = {
   eligibility: EligibilityResult | null;
   caseId: string | null;
   notes: string | null;
+  /** Set when the wrap-up draft is first requested; no new actions after that. */
+  wrapUpStartedAt: string | null;
 };
 
 export type AuditEvent = {
@@ -45,6 +47,8 @@ export type AuditEvent = {
   result: "ok" | "rejected" | "failed";
   data?: Record<string, unknown>;
 };
+
+export type IdempotentRecord = { callId: string; caseId: string };
 
 /**
  * Data access used by the call service. M0 keeps everything in memory;
@@ -67,8 +71,14 @@ export interface Store {
   getCall(id: string): CallSession | undefined;
   insertCall(call: CallSession): void;
 
-  idempotent(key: string): string | undefined;
-  rememberIdempotent(key: string, caseId: string): void;
+  /** The case an idempotency key created, and the call it was used on. */
+  idempotent(key: string): IdempotentRecord | undefined;
+  rememberIdempotent(key: string, record: IdempotentRecord): void;
+
+  /** Failed verification attempts per customer, across calls (ISO timestamps). */
+  verificationFailures(customerId: string): string[];
+  recordVerificationFailure(customerId: string, at: string): void;
+  clearVerificationFailures(customerId: string): void;
 
   appendAudit(e: Omit<AuditEvent, "id" | "at">): AuditEvent;
   audit(callId?: string): AuditEvent[];
@@ -79,7 +89,8 @@ export interface Store {
 export class MemoryStore implements Store {
   private data = loadFixtures();
   private calls = new Map<string, CallSession>();
-  private idem = new Map<string, string>();
+  private idem = new Map<string, IdempotentRecord>();
+  private verifyFailures = new Map<string, string[]>();
   private events: AuditEvent[] = [];
   private seq = { case: 0, event: 0 };
 
@@ -134,8 +145,18 @@ export class MemoryStore implements Store {
   idempotent(key: string) {
     return this.idem.get(key);
   }
-  rememberIdempotent(key: string, caseId: string) {
-    this.idem.set(key, caseId);
+  rememberIdempotent(key: string, record: IdempotentRecord) {
+    this.idem.set(key, record);
+  }
+
+  verificationFailures(customerId: string) {
+    return [...(this.verifyFailures.get(customerId) ?? [])];
+  }
+  recordVerificationFailure(customerId: string, at: string) {
+    this.verifyFailures.set(customerId, [...(this.verifyFailures.get(customerId) ?? []), at]);
+  }
+  clearVerificationFailures(customerId: string) {
+    this.verifyFailures.delete(customerId);
   }
 
   appendAudit(e: Omit<AuditEvent, "id" | "at">) {
@@ -151,6 +172,7 @@ export class MemoryStore implements Store {
     this.data = loadFixtures();
     this.calls.clear();
     this.idem.clear();
+    this.verifyFailures.clear();
     this.events = [];
     this.seq = { case: 0, event: 0 };
   }

@@ -1,0 +1,290 @@
+name: Remote Independent Review
+
+# One evidence producer for Bank Agent Assist. The provider-independent `review-required`
+# workflow validates whichever trusted reviewer produces a complete exact-head
+# review, so this job is never a required check and its quota or credentials
+# can never block a merge.
+#
+# Independent by design: it runs remotely, in a fresh context, with no
+# knowledge of the session that wrote the code. Comments only — it never
+# merges, closes, approves, or requests changes.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to review (any base branch)"
+        required: true
+        type: string
+
+# Keyed on the event as well as the PR, so an automatic run that decides to
+# skip can never cancel a manual run that is doing the real review.
+concurrency:
+  group: remote-independent-review-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  remote-independent-review:
+    # Drafts are still being written. Dependabot runs have no secrets; review
+    # those by dispatching this workflow by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.draft == false && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    env:
+      # The reviewer runs the app's checks with Mock AI only: no Gemini key, no real data.
+      AI_PROVIDER: mock
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check reviewer credential
+        id: credential
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::CLAUDE_CODE_OAUTH_TOKEN is not set; no Claude review was produced. review-required still needs a trusted review."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One source of truth for the PR under review, so the rest of the job
+      # doesn't care whether it was triggered by an event or by hand.
+      - name: Resolve PR
+        id: pr
+        if: steps.credential.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          set -euo pipefail
+          data=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json number,headRefOid,headRefName,baseRefName,state)
+          state=$(jq -r .state <<<"$data")
+          if [ "$state" != "OPEN" ]; then
+            echo "::error::PR #$NUMBER is $state, not OPEN — nothing to review."
+            exit 1
+          fi
+          {
+            echo "number=$(jq -r .number <<<"$data")"
+            echo "sha=$(jq -r .headRefOid <<<"$data")"
+            echo "head=$(jq -r .headRefName <<<"$data")"
+            echo "base=$(jq -r .baseRefName <<<"$data")"
+          } >> "$GITHUB_OUTPUT"
+          jq -r '"Reviewing #\(.number): \(.headRefName) -> \(.baseRefName) @ \(.headRefOid[0:8])"' <<<"$data"
+
+      - name: Checkout PR
+        if: steps.pr.outcome == 'success'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Pin the SHA so a push mid-run cannot be reviewed half-old. Full
+          # history so the reviewer compares against the base branch.
+          ref: ${{ steps.pr.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        if: steps.pr.outcome == 'success'
+        run: |
+          git fetch --no-tags origin \
+            "+refs/heads/${{ steps.pr.outputs.base }}:refs/remotes/origin/${{ steps.pr.outputs.base }}"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.pr.outcome == 'success'
+        with:
+          node-version: 24
+          cache: npm
+
+      # Installing dependencies is what lets the reviewer execute the tests
+      # rather than hand-trace them. A failure here degrades the review to
+      # reading code; it must not stop the review from existing.
+      - name: Install dependencies
+        if: steps.pr.outcome == 'success'
+        continue-on-error: true
+        run: npm ci
+
+      - name: Remote independent review
+        if: steps.pr.outcome == 'success'
+        uses: anthropics/claude-code-action@cb4c30246791ba0e8cdd653a00e7bcab3b47dd3c # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.pr.outputs.number }}
+            BASE: ${{ steps.pr.outputs.base }}  HEAD: ${{ steps.pr.outputs.head }}
+            HEAD SHA: ${{ steps.pr.outputs.sha }}
+            TRIGGER: ${{ github.event_name }}
+
+            You are the REMOTE INDEPENDENT REVIEWER for Bank Agent Assist.
+            Bank Agent Assist is an AI co-pilot for a bank's card-servicing call
+            agent: it verifies the caller, follows the call, matches the
+            transaction and recommends a policy-backed action that the agent
+            approves. All data is fictional; actions are simulated.
+
+            If BASE is `main`, this is the merge gate. If BASE is anything
+            else, this is an early review asked for by hand: compare against
+            `origin/<BASE>` and say plainly when something is incomplete
+            rather than broken.
+
+            Re-derive everything yourself. Do NOT assume the PR description,
+            the commit messages, or any prior review is correct. The author was
+            an AI session with its own blind spots; your value is a second,
+            uncontaminated read.
+
+            ## What this repo is
+
+            TypeScript monorepo (npm workspaces). `apps/web` is Next.js: the agent
+            workspace UI plus thin API route handlers in `apps/web/app/api`.
+            `packages/core` holds everything that matters: the call service
+            (`service.ts`), deterministic rules (`domain/eligibility.ts`,
+            `matching.ts`, `evidence.ts`), Zod schemas, the Gemini and Mock AI
+            providers (`ai/`) and the data store (`data/store.ts`, in memory,
+            seeded from `data/`). The irreversible things are actions: a
+            dispute case (and later a card block) plus its audit event.
+
+            Read these first: `AGENTS.md`, `.github/review/README.md`,
+            `.github/review/bank-agent-assist-software-review-v1.json`, `docs/SCOPE.md` (sections 8 and 9: guardrails and exception paths), `docs/M0.md`.
+
+            ## The lenses
+
+            1. Actions. Can any request create a case (or block a card) without
+               a verified, still-active call, an agent-confirmed transaction
+               and passing eligibility, all re-checked in
+               `packages/core/src/service.ts`? Is the idempotency key scoped to
+               the call and transaction? Can the UI show success the server
+               didn't confirm?
+            2. The model's reach. Does any AI output (`ai/gemini.ts`,
+               `ai/mock.ts`, `prompts.ts`) flow into eligibility, the action
+               allowlist or an action request? Is every AI response parsed
+               with its Zod schema, and does failure fall back (X-06)?
+            3. Data exposure. Can `getContext`, briefing, turns, audit or any
+               new route return account data for an unverified call? Do
+               prompts or logs carry anything that isn't demo data?
+            4. Evidence and audit. Are evidence IDs verified against
+               `buildEvidenceIndex` before reaching the UI? Does every state
+               change, including refused ones, append an audit event?
+            5. Demo paths. Do scenario A, X-01, X-02 and X-06 (and any new
+               paths) still work in `packages/core/test/flow.test.ts` and in
+               the workspace components?
+
+            ## Method
+
+            1. `gh pr view` and `git diff origin/<BASE>...HEAD` to see what
+               changed and why.
+            2. Read whole files, callers and callees; never a hunk alone.
+            3. Trace one complete path end to end for each changed area
+               (workspace action in `apps/web/lib/use-call-flow.ts` -> `apps/web/lib/api.ts` -> route in `apps/web/app/api` -> `CallService` -> store and audit -> response rendered in `components/workspace`).
+            4. Run the owned checks that apply and report their real results:
+               `npm test`, `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run build`, and the review-gate checks `node --test .github/scripts/validate-review-profile.test.mjs`. Never report a check you did not run as
+               passed; a check that skips is reported as skipped.
+            5. Prefer a few high-signal findings to exhaustive nitpicking.
+               "No blocking issues" is a valid outcome.
+            6. Every finding needs file and line, the input or sequence that
+               triggers it, and what goes wrong. No failure scenario, no
+               finding. Label suspicions as questions.
+            7. Do not re-litigate a decision the PR description records as
+               Rishi's policy call. If you think one is wrong, say so once in
+               Open questions.
+
+            ## Output
+
+            Leave line-anchored detail as INLINE review comments with the
+            github inline comment tool. That tool exists only on automatic runs
+            (TRIGGER is `pull_request`). On a manual run, post ALL detail as
+            exactly ONE comment via `gh pr comment`, titled
+            "### Inline detail — Bank Agent Assist Software Review", BEFORE the review, and
+            link to it from the review body. Every finding keeps its
+            `file:line` and its concrete failing input.
+
+            Then submit ONE formal review:
+            `gh pr review <PR#> --comment --body "..."`.
+
+            Evaluate every row of `.github/review/bank-agent-assist-software-review-v1.json`
+            exactly once. Review fresh before reading prior reviews, then
+            reconcile every prior BLOCKING finding as Fixed, Still open, or
+            Regressed.
+
+            Only a concrete security, privacy, data-loss, data-integrity,
+            correctness or contract issue is BLOCKING. Suggestions and nits are
+            NON_BLOCKING and never force another revision. After three
+            substantive reviewed revisions without convergence, say the loop
+            must stop and escalate.
+
+            The body is glanceable; completeness tables are exempt from any
+            length limit. Start with this exact contiguous block:
+
+            ## Bank Agent Assist Software Review
+            REVIEW_SCHEMA: bank-agent-assist-software-review-v1
+            PROFILE_ID: bank-agent-assist-software
+            HEAD_SHA: ${{ steps.pr.outputs.sha }}
+            REVIEWER: claude[bot]
+            VERDICT: SHIP | FIX_FIRST | REWORK
+            BLOCKERS: <integer>
+            CHECKLIST_COVERAGE: <covered>/<required>
+            COVERAGE_COMPLETE: YES | NO
+
+            SHIP requires complete coverage and zero blockers. FIX_FIRST and
+            REWORK require at least one blocker. A current-head SHIP is an
+            absolute stop: do not ask for cleanup or another round.
+
+            ### Changes in this PR
+            | # | Change | Remark | — one row per distinct change; remark is
+            15 words or fewer (solid / risky / duplicates X), not a verdict.
+
+            ### Checklist coverage
+            | ID | Result | Evidence | — every profile row exactly once.
+            Result is PASS / BLOCKING / NON_BLOCKING / N/A.
+
+            ### Verification run
+            One line: which checks you ran and their results, and which you
+            could not run. "none" if you ran none.
+
+            ### Blocking findings
+            | ID | Finding | Evidence | Required fix | — BLOCKERS equals the
+            number of rows. Write "None" when zero.
+
+            ### Prior-blocker reconciliation
+            | Prior finding | Status | Evidence | — Fixed / Still open /
+            Regressed. "None found" only when no prior review raised one.
+
+            ### Non-blocking follow-ups
+            Optional suggestions only, or "None".
+
+            ### Open questions
+            Genuine uncertainty needing Rishi's call; omit if none.
+
+            STRICT: never run `gh pr merge` or `gh pr close`; never use
+            `--approve` or `--request-changes` (always `--comment`). You
+            advise; the merge decision is Rishi's.
+
+          claude_args: |
+            --model claude-opus-5-5
+            --effort medium
+            --max-turns 80
+            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(npm test),Bash(npm run check),Bash(npm run typecheck),Bash(npm run lint),Bash(npm run format:check),Bash(npm run build),Bash(node --test:*),Bash(node .github/scripts/validate-review-profile.mjs:*),Bash(npx vitest:*),Bash(npx tsc:*),mcp__github_inline_comment__create_inline_comment,WebSearch,WebFetch"
+
+      # Producer health is advisory. Validate its artifact so failures are
+      # visible; branch protection relies on `review-required` instead.
+      - name: Validate the produced review
+        if: always() && steps.pr.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "/repos/${{ github.repository }}/pulls/$PR/reviews" \
+            > "$RUNNER_TEMP/reviews.json"
+          node .github/scripts/validate-review-profile.mjs \
+            .github/review/bank-agent-assist-software-review-v1.json \
+            --profile-id bank-agent-assist-software \
+            --reviews-json "$RUNNER_TEMP/reviews.json" \
+            --head-sha "$SHA"

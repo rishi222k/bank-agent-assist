@@ -21,20 +21,20 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - name: Format
-        run: npm run format:check
-      - name: Lint
-        run: npm run lint
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Unit tests
-        run: npm test
+      # The review gate's own tests and the profile's guarded sources. A drifted
+      # guard fails here, before any reviewer spends a round on it.
+      - name: Review gate
+        run: node --test .github/scripts/validate-review-profile.test.mjs
+      - name: Review profile
+        run: node .github/scripts/validate-review-profile.mjs .github/review/bank-agent-assist-software-review-v1.json --profile-id bank-agent-assist-software
+      # Format, lint, typecheck and unit tests.
+      - run: npm run check
       - name: Build
         run: npm run build
       - name: Audit production dependencies

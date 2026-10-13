@@ -1,0 +1,109 @@
+name: Review Required
+
+# Provider-independent evidence gate. Review producers may fail or be replaced;
+# this check cares only that a trusted formal review for the exact PR head obeys
+# the repository-owned Bank Agent Assist contract.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Open PR number to validate"
+        required: true
+        type: string
+
+concurrency:
+  group: review-required-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  review-required:
+    name: Publish exact-head review status
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve immutable PR head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          set -euo pipefail
+          data=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json number,headRefOid,baseRefName,state)
+          test "$(jq -r .state <<<"$data")" = OPEN
+          test "$(jq -r .baseRefName <<<"$data")" = main
+          {
+            echo "number=$(jq -r .number <<<"$data")"
+            echo "sha=$(jq -r .headRefOid <<<"$data")"
+          } >> "$GITHUB_OUTPUT"
+
+      # Policy comes from main. A PR may propose the next profile or validator,
+      # but it cannot weaken the policy judging its own changes.
+      - name: Checkout governing policy
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+
+      - name: Validate current-head review evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "/repos/${{ github.repository }}/pulls/$PR/reviews" \
+            > "$RUNNER_TEMP/reviews.json"
+
+          policy_root="$GITHUB_WORKSPACE"
+          if [ ! -f "$policy_root/.github/scripts/validate-review-profile.mjs" ]; then
+            # One-time bootstrap only. This context is not made required until
+            # the governing files are on main and a normal canary has passed.
+            git fetch --no-tags origin "$SHA"
+            git worktree add --detach "$RUNNER_TEMP/proposed-policy" "$SHA"
+            policy_root="$RUNNER_TEMP/proposed-policy"
+            echo "Bootstrap: main has no policy yet; validating the proposed policy."
+          fi
+
+          cd "$policy_root"
+          set +e
+          node .github/scripts/validate-review-profile.mjs \
+            .github/review/bank-agent-assist-software-review-v1.json \
+            --profile-id bank-agent-assist-software \
+            --reviews-json "$RUNNER_TEMP/reviews.json" \
+            --head-sha "$SHA" \
+            > "$RUNNER_TEMP/review-validation.log" 2>&1
+          validation_status=$?
+          set -e
+
+          if [ "$validation_status" -eq 0 ]; then
+            state=success
+            description="Valid provider-independent review for exact PR head"
+          else
+            state=failure
+            description="No valid provider-independent review for exact PR head"
+          fi
+
+          gh api --method POST "/repos/${{ github.repository }}/statuses/$SHA" \
+            -f state="$state" \
+            -f context="review-required" \
+            -f description="$description" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          cat "$RUNNER_TEMP/review-validation.log"
+          if [ "$validation_status" -ne 0 ]; then
+            echo "No valid evidence yet; the explicit review-required status is red."
+            exit 0
+          fi
+          echo "A trusted, complete Bank Agent Assist review exists for $SHA."

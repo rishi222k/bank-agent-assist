@@ -1,11 +1,13 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { AudioLines, ChevronDown, CircleAlert, Pause, Play, SkipForward } from "lucide-react";
+import { AudioLines, ChevronDown, CircleAlert, Mic, MicOff, Pause, Play, SkipForward } from "lucide-react";
 import type { ExtractedFacts } from "@baa/core";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ISSUE_LABELS, type CallFlow, type Speaker } from "@/lib/use-call-flow";
 import { cn, usd } from "@/lib/utils";
@@ -36,7 +38,8 @@ function offset(at: string, startedAt: number | null) {
 }
 
 export function ConversationPanel({ flow }: { flow: CallFlow }) {
-  const { call, transcript, interim, playing, scriptDone, verified, context } = flow;
+  const { call, transcript, interim, playing, scriptDone, verified, context, mode, speech } = flow;
+  const live = mode === "live";
   const scroller = useRef<HTMLDivElement>(null);
   // Follow new text only while the agent is at the bottom, so scrolling back to re-read isn't yanked away.
   const stick = useRef(true);
@@ -49,8 +52,24 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [transcript.length, interim?.shown, scriptDone]);
 
-  const controls = verified && !scriptDone && !flow.wrapUpRequested && (
+  const scriptControls = verified && !live && !scriptDone && !flow.wrapUpRequested && (
     <>
+      {!started && speech.supported && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="outline"
+              className="size-8"
+              onClick={flow.actions.startLive}
+              aria-label="Use microphone"
+            >
+              <Mic />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Use microphone instead of the scripted call</TooltipContent>
+        </Tooltip>
+      )}
       {playing ? (
         <Button size="sm" variant="outline" onClick={flow.actions.pause}>
           <Pause /> Pause
@@ -81,8 +100,19 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
   return (
     <>
       <PanelHeader icon={AudioLines} title="Transcript" meta={<TranscriptStatus flow={flow} total={total} />}>
-        {controls}
+        {scriptControls}
+        {live && !flow.wrapUpRequested && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={speech.listening ? flow.actions.pauseLive : flow.actions.resumeLive}
+          >
+            {speech.listening ? <MicOff /> : <Mic />}
+            {speech.listening ? "Pause mic" : "Resume mic"}
+          </Button>
+        )}
       </PanelHeader>
+      {live && !flow.wrapUpRequested && <LiveBar flow={flow} />}
 
       <div
         ref={scroller}
@@ -99,12 +129,14 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
                 <AudioLines />
               </EmptyMedia>
               <EmptyTitle className="text-base">
-                {verified ? "Ready to play the call" : "Waiting for verification"}
+                {!verified ? "Waiting for verification" : live ? "Listening" : "Ready to play the call"}
               </EmptyTitle>
               <EmptyDescription>
-                {verified
-                  ? "Press Play call. The transcript streams in here as each side speaks, and the co-pilot listens for the charge."
-                  : "Verify the caller first. The transcript starts once their identity is confirmed."}
+                {!verified
+                  ? "Verify the caller first. The transcript starts once their identity is confirmed."
+                  : live
+                    ? "Start speaking. Pick who is talking above; the transcript streams in here."
+                    : "Press Play call, or use the microphone. The transcript streams in here as each side speaks, and the co-pilot listens for the charge."}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -136,9 +168,63 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
   );
 }
 
+/**
+ * Live mode with one microphone. On a real call each side is its own audio channel, so the speaker
+ * is known; here the agent says who is talking.
+ */
+function LiveBar({ flow }: { flow: CallFlow }) {
+  const customer = flow.context?.customer.name ?? "Customer";
+  return (
+    <div className="shrink-0 space-y-2 border-b bg-surface px-4 py-2.5 sm:px-6">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="text-xs text-muted-foreground">Who is speaking?</span>
+        <ToggleGroup
+          type="single"
+          size="sm"
+          variant="outline"
+          value={flow.liveSpeaker}
+          onValueChange={(v) => v && flow.actions.setLiveSpeaker(v as Speaker)}
+        >
+          <ToggleGroupItem
+            value="agent"
+            className="px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+          >
+            Agent
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="customer"
+            className="px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+          >
+            {customer}
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        One microphone stands in for both sides of the call. Speech is transcribed by the browser (Chrome uses Google’s
+        free speech service).
+      </p>
+      {flow.speech.error && (
+        <Alert variant="warning" className="py-2">
+          <CircleAlert />
+          <AlertDescription>{flow.speech.error}</AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 function TranscriptStatus({ flow, total }: { flow: CallFlow; total: number }) {
   const done = flow.transcript.length;
   if (flow.ended || flow.wrapUpRequested) return <>Call wrapped up · {done} lines</>;
+  if (flow.mode === "live")
+    return flow.speech.listening ? (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="size-1.5 animate-pulse rounded-full bg-destructive" />
+        Live · microphone
+      </span>
+    ) : (
+      <>Microphone paused · {done} lines</>
+    );
   if (flow.scriptDone) return <>Call finished · {done} lines</>;
   if (flow.playing)
     return (

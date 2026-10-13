@@ -17,6 +17,7 @@ import type {
   WrapUp,
 } from "@baa/core";
 import { api, ApiError } from "./api";
+import { useSpeechInput } from "./use-speech-input";
 
 export type Stage = "verify" | "brief" | "listen" | "confirm" | "act" | "wrapup" | "done";
 
@@ -70,6 +71,9 @@ export function useCallFlow() {
   const [context, setContext] = useState<CallContext | null>(null);
   const [briefing, setBriefing] = useState<AiResult<BriefingSummary> | null>(null);
 
+  // "script" plays the scenario's scripted call; "live" transcribes the microphone.
+  const [mode, setMode] = useState<"script" | "live">("script");
+  const [liveSpeaker, setLiveSpeaker] = useState<Speaker>("customer");
   const [transcript, setTranscript] = useState<Turn[]>([]);
   const [interim, setInterim] = useState<InterimTurn | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -97,6 +101,10 @@ export function useCallFlow() {
   const callIdRef = useRef<string | null>(null);
   // Index of the last script turn committed, so an effect re-run can't send a turn twice.
   const committedRef = useRef(-1);
+  // Live mode: who started the phrase being spoken, and the queue that keeps turns in order.
+  const utterance = useRef<{ speaker: Speaker; at: string } | null>(null);
+  const liveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const stopSpeech = useRef<() => void>(() => {});
 
   useEffect(() => {
     api
@@ -111,8 +119,11 @@ export function useCallFlow() {
   const bumpAudit = () => setAuditVersion((v) => v + 1);
 
   const clear = useCallback(() => {
+    stopSpeech.current();
     callIdRef.current = null;
     committedRef.current = -1;
+    utterance.current = null;
+    setMode("script");
     setCall(null);
     setStartedAt(null);
     setVerify({ attemptsLeft: 3, locked: false, error: null });
@@ -209,35 +220,24 @@ export function useCallFlow() {
     [call, fail],
   );
 
-  // Scripted call playback, shaped like a streaming recogniser: each turn streams in word by word
-  // (interim), then becomes final and is sent to the server, which analyses customer turns.
-  const commitTurn = useCallback(
-    async (turn: InterimTurn) => {
-      const callId = callIdRef.current;
-      if (!callId || committedRef.current >= turn.index) return;
-      committedRef.current = turn.index;
-      const final: Turn = { speaker: turn.speaker, text: turn.words.join(" "), at: turn.at };
-      setInterim(null);
-      setTranscript((t) => [...t, final]);
+  /** Sends a finished turn to the server, which analyses customer turns. False if it wasn't stored. */
+  const postTurn = useCallback(
+    async (callId: string, final: Turn) => {
       setSending(true);
-      if (turn.speaker === "customer") setAnalyzing(true);
+      if (final.speaker === "customer") setAnalyzing(true);
       try {
         const r = await api.turn(callId, { speaker: final.speaker, text: final.text });
-        if (callIdRef.current !== callId) return;
-        if (r.analysis) {
+        if (callIdRef.current === callId && r.analysis) {
           setFacts(r.analysis.facts);
           setMatches(r.analysis.matches);
           setExtractError(r.analysis.ai.ok ? null : r.analysis.ai.error);
           const top = r.analysis.matches[0];
           if (top) setSelectedTxnId((current) => current ?? top.transactionId);
         }
+        return true;
       } catch (e) {
-        if (callIdRef.current !== callId) return;
-        // The server never stored this turn: take it back off the screen so a retry resends it.
-        committedRef.current = turn.index - 1;
-        setTranscript((t) => t.slice(0, -1));
-        setPlaying(false);
-        fail(e);
+        if (callIdRef.current === callId) fail(e);
+        return false;
       } finally {
         if (callIdRef.current === callId) {
           setSending(false);
@@ -247,6 +247,63 @@ export function useCallFlow() {
     },
     [fail],
   );
+
+  // Scripted call playback, shaped like a streaming recogniser: each turn streams in word by word
+  // (interim), then becomes final and is sent to the server.
+  const commitTurn = useCallback(
+    async (turn: InterimTurn) => {
+      const callId = callIdRef.current;
+      if (!callId || committedRef.current >= turn.index) return;
+      committedRef.current = turn.index;
+      const final: Turn = { speaker: turn.speaker, text: turn.words.join(" "), at: turn.at };
+      setInterim(null);
+      setTranscript((t) => [...t, final]);
+      if (!(await postTurn(callId, final)) && callIdRef.current === callId) {
+        // The server never stored this turn: take it back off the screen so a retry resends it.
+        committedRef.current = turn.index - 1;
+        setTranscript((t) => t.slice(0, -1));
+        setPlaying(false);
+      }
+    },
+    [postTurn],
+  );
+
+  // Live mode: the browser's recogniser streams interim text, then final phrases. A phrase belongs
+  // to whoever was selected when it started, so switching speakers mid-phrase doesn't relabel it.
+  const speech = useSpeechInput({
+    onInterim: (text) => {
+      if (!text) return setInterim(null);
+      utterance.current ??= { speaker: liveSpeaker, at: new Date().toISOString() };
+      const words = text.split(/\s+/);
+      setInterim({
+        index: -1,
+        speaker: utterance.current.speaker,
+        words,
+        shown: words.length,
+        at: utterance.current.at,
+      });
+    },
+    onFinal: (text) => {
+      const callId = callIdRef.current;
+      const u = utterance.current ?? { speaker: liveSpeaker, at: new Date().toISOString() };
+      utterance.current = null;
+      if (!callId) return;
+      const final: Turn = { speaker: u.speaker, text, at: u.at };
+      setInterim(null);
+      setTranscript((t) => [...t, final]);
+      // Keep the server's transcript in speaking order even if a request is slow.
+      liveQueue.current = liveQueue.current.then(() => postTurn(callId, final));
+    },
+  });
+  useEffect(() => {
+    stopSpeech.current = speech.stop;
+  }, [speech.stop]);
+
+  const startLive = useCallback(() => {
+    setMode("live");
+    setPlaying(false);
+    speech.start();
+  }, [speech]);
 
   const startNextTurn = useCallback(
     (instant: boolean) => {
@@ -339,13 +396,14 @@ export function useCallFlow() {
     if (!call) return;
     setWrapUpRequested(true);
     setPlaying(false);
+    speech.stop();
     setInterim(null);
     try {
       setWrapUp(await api.wrapUpDraft(call.callId));
     } catch (e) {
       fail(e);
     }
-  }, [call, fail]);
+  }, [call, fail, speech]);
 
   const saveWrapUp = useCallback(
     async (notes: string) => {
@@ -372,7 +430,8 @@ export function useCallFlow() {
     }
   }, [clear, fail]);
 
-  const scriptDone = !!call && transcript.length >= call.script.length;
+  // Only a scripted call has a known end; a live call ends when the agent wraps up.
+  const scriptDone = mode === "script" && !!call && transcript.length >= call.script.length;
 
   const stage: Stage | null = !call
     ? null
@@ -400,6 +459,9 @@ export function useCallFlow() {
     verified,
     context,
     briefing,
+    mode,
+    liveSpeaker,
+    speech: { supported: speech.supported, listening: speech.listening, error: speech.error },
     transcript,
     interim,
     // Playback stops by itself at the end of the script.
@@ -426,6 +488,10 @@ export function useCallFlow() {
       play: () => setPlaying(true),
       pause: () => setPlaying(false),
       step,
+      startLive,
+      resumeLive: speech.start,
+      pauseLive: speech.stop,
+      setLiveSpeaker,
       selectIssueType: (t: IssueType) => !confirmed && setChosenIssueType(t),
       selectTransaction: (id: string) => !confirmed && setSelectedTxnId(id),
       confirmTransaction,

@@ -123,6 +123,7 @@ export function useCallFlow() {
     callIdRef.current = null;
     committedRef.current = -1;
     utterance.current = null;
+    liveQueue.current = Promise.resolve();
     setMode("script");
     setCall(null);
     setStartedAt(null);
@@ -223,6 +224,8 @@ export function useCallFlow() {
   /** Sends a finished turn to the server, which analyses customer turns. False if it wasn't stored. */
   const postTurn = useCallback(
     async (callId: string, final: Turn) => {
+      // A turn queued during an earlier call must not touch the current call's state.
+      if (callIdRef.current !== callId) return false;
       setSending(true);
       if (final.speaker === "customer") setAnalyzing(true);
       try {

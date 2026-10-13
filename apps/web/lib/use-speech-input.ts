@@ -68,7 +68,8 @@ export function useSpeechInput(handlers: { onInterim: (text: string) => void; on
       setError("This browser has no speech recognition. Use Google Chrome.");
       return;
     }
-    recognition.current?.abort();
+    // A session still running is replaced; one that's stopping is left to deliver its last phrase.
+    if (wanted.current) recognition.current?.abort();
     const rec = new Ctor();
     rec.lang = "en-US";
     rec.continuous = true;
@@ -84,14 +85,16 @@ export function useSpeechInput(handlers: { onInterim: (text: string) => void; on
       }
       latest.current.onInterim(interim.trim());
     };
+    // Events from a session that has since been replaced must not change the current one's state.
     rec.onerror = (e) => {
-      if (e.error === "no-speech" || e.error === "aborted") return;
+      if (recognition.current !== rec || e.error === "no-speech" || e.error === "aborted") return;
       wanted.current = false;
       setListening(false);
       setError(ERRORS[e.error] ?? `Speech recognition stopped (${e.error}).`);
     };
     rec.onend = () => {
-      if (wanted.current && recognition.current === rec) rec.start();
+      if (recognition.current !== rec) return;
+      if (wanted.current) rec.start();
       else setListening(false);
     };
     recognition.current = rec;

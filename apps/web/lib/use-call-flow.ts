@@ -33,7 +33,13 @@ export const STAGES: { id: Exclude<Stage, "done">; label: string }[] = [
 export type Speaker = "agent" | "customer";
 
 /** A finished transcript segment. `at` is when the speaker started talking. */
-export type Turn = { speaker: Speaker; text: string; at: string };
+export type Turn = {
+  speaker: Speaker;
+  text: string;
+  at: string;
+  /** A live line the server didn't store; shown as not saved, with a retry. */
+  failed?: boolean;
+};
 
 /**
  * The segment still being spoken. A streaming recogniser sends interim text that firms up into a
@@ -104,6 +110,8 @@ export function useCallFlow() {
   // Live mode: who started the phrase being spoken, and the queue that keeps turns in order.
   const utterance = useRef<{ speaker: Speaker; at: string } | null>(null);
   const liveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  // The call the microphone is transcribing; phrases arriving for any other call are dropped.
+  const liveCallId = useRef<string | null>(null);
   const stopSpeech = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -123,6 +131,7 @@ export function useCallFlow() {
     callIdRef.current = null;
     committedRef.current = -1;
     utterance.current = null;
+    liveCallId.current = null;
     liveQueue.current = Promise.resolve();
     setMode("script");
     setCall(null);
@@ -287,22 +296,45 @@ export function useCallFlow() {
       });
     },
     onFinal: (text) => {
-      const callId = callIdRef.current;
       const u = utterance.current ?? { speaker: liveSpeaker, at: new Date().toISOString() };
       utterance.current = null;
-      if (!callId) return;
-      const final: Turn = { speaker: u.speaker, text, at: u.at };
       setInterim(null);
+      const callId = callIdRef.current;
+      if (!text || !callId || liveCallId.current !== callId) return;
+      const final: Turn = { speaker: u.speaker, text, at: u.at };
       setTranscript((t) => [...t, final]);
-      // Keep the server's transcript in speaking order even if a request is slow.
-      liveQueue.current = liveQueue.current.then(() => postTurn(callId, final));
+      sendLive(callId, final);
     },
   });
   useEffect(() => {
-    stopSpeech.current = speech.stop;
-  }, [speech.stop]);
+    stopSpeech.current = speech.cancel;
+  }, [speech.cancel]);
+
+  // Live lines are posted in speaking order. One the server didn't store stays on screen, marked
+  // as not saved, until the agent retries it (a retried line is stored after the ones before it).
+  const sendLive = useCallback(
+    (callId: string, turn: Turn) => {
+      liveQueue.current = liveQueue.current.then(async () => {
+        if (!(await postTurn(callId, turn)) && callIdRef.current === callId)
+          setTranscript((t) => t.map((x) => (x === turn ? { ...turn, failed: true } : x)));
+      });
+    },
+    [postTurn],
+  );
+
+  const retryTurn = useCallback(
+    (turn: Turn) => {
+      const callId = callIdRef.current;
+      if (!callId || !turn.failed) return;
+      const again: Turn = { ...turn, failed: false };
+      setTranscript((t) => t.map((x) => (x === turn ? again : x)));
+      sendLive(callId, again);
+    },
+    [sendLive],
+  );
 
   const startLive = useCallback(() => {
+    liveCallId.current = callIdRef.current;
     setMode("live");
     setPlaying(false);
     speech.start();
@@ -402,6 +434,8 @@ export function useCallFlow() {
     speech.stop();
     setInterim(null);
     try {
+      // Notes are drafted from the server's transcript, so let queued live lines land first.
+      await liveQueue.current;
       setWrapUp(await api.wrapUpDraft(call.callId));
     } catch (e) {
       fail(e);
@@ -493,6 +527,7 @@ export function useCallFlow() {
       step,
       startLive,
       resumeLive: speech.start,
+      retryTurn,
       pauseLive: speech.stop,
       setLiveSpeaker,
       selectIssueType: (t: IssueType) => !confirmed && setChosenIssueType(t),

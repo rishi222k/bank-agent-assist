@@ -9,23 +9,23 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ISSUE_LABELS, type CallFlow, type Speaker } from "@/lib/use-call-flow";
+import { ISSUE_LABELS, type CallFlow, type Speaker, type Turn } from "@/lib/use-call-flow";
 import { cn, usd } from "@/lib/utils";
 import { AiLabel, PanelHeader } from "./kit";
 
 /** Consecutive lines from the same speaker, shown as one block like a transcript document. */
-type Block = { speaker: Speaker; at: string; lines: string[]; interim: string | null };
+type Block = { speaker: Speaker; at: string; lines: Turn[]; interim: string | null };
 
 function toBlocks(flow: CallFlow): Block[] {
   const blocks: Block[] = [];
-  const push = (speaker: Speaker, at: string, text: string | null, interim: string | null) => {
+  const push = (speaker: Speaker, at: string, line: Turn | null, interim: string | null) => {
     const last = blocks.at(-1);
     if (last && last.speaker === speaker && last.interim === null) {
-      if (text) last.lines.push(text);
+      if (line) last.lines.push(line);
       last.interim = interim;
-    } else blocks.push({ speaker, at, lines: text ? [text] : [], interim });
+    } else blocks.push({ speaker, at, lines: line ? [line] : [], interim });
   };
-  for (const t of flow.transcript) push(t.speaker, t.at, t.text, null);
+  for (const t of flow.transcript) push(t.speaker, t.at, t, null);
   const i = flow.interim;
   if (i) push(i.speaker, i.at, null, i.words.slice(0, i.shown).join(" "));
   return blocks;
@@ -149,6 +149,7 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
                   block={b}
                   time={offset(b.at, flow.startedAt)}
                   customerName={context?.customer.name ?? "Customer"}
+                  onRetry={flow.actions.retryTurn}
                 />
               ))}
             </div>
@@ -242,7 +243,17 @@ function TranscriptStatus({ flow, total }: { flow: CallFlow; total: number }) {
   return <>Scripted call</>;
 }
 
-function TranscriptBlock({ block, time, customerName }: { block: Block; time: string; customerName: string }) {
+function TranscriptBlock({
+  block,
+  time,
+  customerName,
+  onRetry,
+}: {
+  block: Block;
+  time: string;
+  customerName: string;
+  onRetry: (turn: Turn) => void;
+}) {
   const agent = block.speaker === "agent";
   return (
     // A coloured band down the left edge tells the speakers apart at a glance:
@@ -261,7 +272,26 @@ function TranscriptBlock({ block, time, customerName }: { block: Block; time: st
         </time>
       </h3>
       <p className={cn("text-[15px] leading-7 text-pretty", agent ? "text-foreground/70" : "text-foreground")}>
-        {block.lines.join(" ")}
+        {block.lines.map((line, i) => (
+          <span key={i}>
+            {i > 0 && " "}
+            {line.failed ? (
+              // The server never stored this line, so the co-pilot hasn't heard it.
+              <span className="rounded-sm bg-destructive/10 text-destructive">
+                {line.text}{" "}
+                <button
+                  type="button"
+                  onClick={() => onRetry(line)}
+                  className="inline-flex items-center gap-1 align-baseline text-xs font-medium underline underline-offset-2 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  <CircleAlert className="size-3" /> Not saved · Retry
+                </button>
+              </span>
+            ) : (
+              line.text
+            )}
+          </span>
+        ))}
         {block.interim !== null && (
           <span aria-hidden className="text-muted-foreground">
             {block.lines.length > 0 && " "}

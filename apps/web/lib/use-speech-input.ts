@@ -49,6 +49,8 @@ export function useSpeechInput(handlers: { onInterim: (text: string) => void; on
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recognition = useRef<Recognition | null>(null);
+  // Sessions thrown away by cancel(): anything they still deliver is dropped.
+  const cancelled = useRef(new WeakSet<Recognition>());
   // Chrome ends a session after a pause; keep restarting until the agent stops.
   const wanted = useRef(false);
   const latest = useRef(handlers);
@@ -56,9 +58,22 @@ export function useSpeechInput(handlers: { onInterim: (text: string) => void; on
     latest.current = handlers;
   });
 
+  /** Stop listening; the phrase being spoken is still delivered. */
   const stop = useCallback(() => {
     wanted.current = false;
     recognition.current?.stop();
+    setListening(false);
+  }, []);
+
+  /** Stop and discard: nothing the session still delivers reaches the handlers (the call is over). */
+  const cancel = useCallback(() => {
+    wanted.current = false;
+    const rec = recognition.current;
+    if (rec) {
+      cancelled.current.add(rec);
+      rec.abort();
+    }
+    recognition.current = null;
     setListening(false);
   }, []);
 
@@ -75,13 +90,14 @@ export function useSpeechInput(handlers: { onInterim: (text: string) => void; on
     rec.continuous = true;
     rec.interimResults = true;
     rec.onresult = (e) => {
+      if (cancelled.current.has(rec)) return;
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i]!;
         const text = r[0].transcript.trim();
-        if (!text) continue;
+        // An empty final still ends the phrase, so the next one starts with the current speaker.
         if (r.isFinal) latest.current.onFinal(text);
-        else interim += `${text} `;
+        else if (text) interim += `${text} `;
       }
       latest.current.onInterim(interim.trim());
     };
@@ -104,13 +120,7 @@ export function useSpeechInput(handlers: { onInterim: (text: string) => void; on
     rec.start();
   }, []);
 
-  useEffect(
-    () => () => {
-      wanted.current = false;
-      recognition.current?.abort();
-    },
-    [],
-  );
+  useEffect(() => cancel, [cancel]);
 
-  return { supported, listening, error, start, stop };
+  return { supported, listening, error, start, stop, cancel };
 }

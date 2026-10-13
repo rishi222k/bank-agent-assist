@@ -189,3 +189,20 @@ test("d. agent configuration anywhere in the tree is never docs", () => {
   ])
     assert.equal(isDocsOnly([file]), false, file);
 });
+
+test("d. agent files and folders are matched case-insensitively", () => {
+  for (const file of [
+    "agents.md",
+    "Agents.MD",
+    "claude.md",
+    "apps/web/Claude.md",
+    ".Claude/commands/x.md",
+    "AGENT.md",
+    ".cursorrules",
+    ".Windsurf/rules.md",
+    ".GitHub/review/README.md",
+    "docs/.agents/x.md",
+  ])
+    assert.equal(isDocsOnly([file]), false, file);
+  assert.equal(isDocsOnly(["docs/agents-overview.md", "README.md", "Docs/Guide.md"]), true);
+});

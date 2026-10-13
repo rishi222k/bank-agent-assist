@@ -61,9 +61,10 @@ Then a line saying who produced it (e.g. "Produced by a fresh-context Claude ses
 
 `SHIP` needs complete coverage and `BLOCKERS: 0`. `FIX_FIRST` (keep the approach) and `REWORK` (the approach is wrong) need at least one blocker, and `BLOCKERS` equals the rows in the blocking table.
 
-Check the body before posting, from a checkout of `main`:
+Check the body before posting. Run the validator from `main` (the policy that judges the PR), in a folder whose path has no spaces, and make sure it prints a line ending in **`valid`**; no output means it didn't run. Every metadata key (`VERDICT:`, `BLOCKERS:`, …) may start a line only once in the whole body.
 
 ```bash
+git worktree add --detach /tmp/main-policy origin/main && cd /tmp/main-policy
 # reviews.json: [[{"id":1,"user":{"login":"<login>"},"author_association":"COLLABORATOR","state":"COMMENTED","commit_id":"<SHA>","body":<body as a JSON string>,"submitted_at":"2026-01-01T00:00:00Z"}]]
 node .github/scripts/validate-review-profile.mjs .github/review/bank-agent-assist-software-review-v1.json \
   --profile-id bank-agent-assist-software --reviews-json reviews.json --head-sha <SHA>
@@ -77,4 +78,4 @@ gh pr review <PR> --comment --body-file review.md
 
 Never `--approve` or `--request-changes`, never push to the PR, never merge or close it. Remove your worktree when done (`git worktree remove ../review-pr<PR>`).
 
-Only a `SHIP` on the latest commit from a collaborator (or a trusted login) turns `review-required` green; a new push needs a new review.
+A `SHIP` on the latest commit from a collaborator (or a trusted login) is one of the four ways `review-required` passes (see [CONTRIBUTING.md](../../CONTRIBUTING.md)); a new push needs a new review. `FIX_FIRST` and `REWORK` never pass it.

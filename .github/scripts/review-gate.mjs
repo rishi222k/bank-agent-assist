@@ -36,17 +36,37 @@ const newestFirst = (left, right) =>
   String(right.submitted_at ?? "").localeCompare(String(left.submitted_at ?? "")) ||
   Number(right.id ?? 0) - Number(left.id ?? 0);
 
-// Agents follow these as instructions, so they're treated as code, never as docs.
-const AGENT_INSTRUCTIONS = new Set(["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", "GEMINI.md"]);
-const AGENT_DIRS = [".claude/", ".cursor/", ".codex/", ".gemini/"];
+// Agents follow these as instructions, so they're treated as code, never as docs. Names are
+// compared in lowercase: on a case-insensitive checkout (macOS, Windows) `agents.md` overwrites
+// `AGENTS.md`, and some agents load `claude.md` as instructions.
+const AGENT_FILES = new Set([
+  "agents.md",
+  "agent.md",
+  "claude.md",
+  "claude.local.md",
+  "gemini.md",
+  ".cursorrules",
+  ".windsurfrules",
+  ".clinerules",
+]);
+const AGENT_DIRS = new Set([
+  ".github",
+  ".claude",
+  ".cursor",
+  ".codex",
+  ".gemini",
+  ".agents",
+  ".windsurf",
+  ".clinerules",
+]);
 
-const isDocPath = (path) =>
-  typeof path === "string" &&
-  !path.startsWith(".github/") &&
-  !AGENT_INSTRUCTIONS.has(path.split("/").at(-1)) &&
-  !AGENT_DIRS.some((dir) => path.startsWith(dir) || path.includes(`/${dir}`)) &&
-  !path.split("/").includes("..") &&
-  (path.startsWith("docs/") || /\.md$/i.test(path));
+const isDocPath = (path) => {
+  if (typeof path !== "string") return false;
+  const parts = path.toLowerCase().split("/");
+  if (parts.includes("..") || AGENT_FILES.has(parts.at(-1))) return false;
+  if (parts.slice(0, -1).some((dir) => AGENT_DIRS.has(dir))) return false;
+  return parts[0] === "docs" || parts.at(-1).endsWith(".md");
+};
 
 /**
  * True when every changed file is documentation. A rename counts only if both its old and new

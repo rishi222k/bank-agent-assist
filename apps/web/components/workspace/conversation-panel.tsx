@@ -110,7 +110,7 @@ export function ConversationPanel({ flow }: { flow: CallFlow }) {
           </Empty>
         ) : (
           <div className="mx-auto max-w-2xl">
-            <div role="log" aria-live="polite" aria-label="Call transcript" className="space-y-5">
+            <div role="log" aria-live="polite" aria-label="Call transcript" className="space-y-3">
               {blocks.map((b, i) => (
                 <TranscriptBlock
                   key={i}
@@ -159,9 +159,15 @@ function TranscriptStatus({ flow, total }: { flow: CallFlow; total: number }) {
 function TranscriptBlock({ block, time, customerName }: { block: Block; time: string; customerName: string }) {
   const agent = block.speaker === "agent";
   return (
-    <article className="animate-in duration-300 fade-in-0">
-      <h3 className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
-        <span className={cn("size-1.5 shrink-0 rounded-full", agent ? "bg-muted-foreground/60" : "bg-ai")} />
+    // A coloured band down the left edge tells the speakers apart at a glance:
+    // neutral for the agent, the AI accent for the customer.
+    <article
+      className={cn(
+        "animate-in rounded-r-md border-l-[3px] py-1.5 pr-2 pl-3 duration-300 fade-in-0",
+        agent ? "border-muted-foreground/30" : "border-ai bg-ai-soft/40",
+      )}
+    >
+      <h3 className="mb-0.5 flex items-center gap-1.5 text-xs font-semibold">
         <span className="truncate">{agent ? "Agent" : customerName}</span>
         {agent && <span className="font-normal text-muted-foreground">· you</span>}
         <time className="ml-auto pl-2 font-mono text-[11px] font-normal text-muted-foreground tabular-nums">

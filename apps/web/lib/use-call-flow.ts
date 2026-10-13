@@ -11,6 +11,7 @@ import type {
   DisputeCase,
   DisputeForm,
   ExtractedFacts,
+  IssueType,
   ScenarioSummary,
   TransactionMatch,
   WrapUp,
@@ -28,9 +29,29 @@ export const STAGES: { id: Exclude<Stage, "done">; label: string }[] = [
   { id: "wrapup", label: "Wrap up" },
 ];
 
-type Turn = { speaker: "agent" | "customer"; text: string; at: string };
+export type Speaker = "agent" | "customer";
 
-const TURN_DELAY_MS = 1400;
+/** A finished transcript segment. `at` is when the speaker started talking. */
+export type Turn = { speaker: Speaker; text: string; at: string };
+
+/**
+ * The segment still being spoken. A streaming recogniser sends interim text that firms up into a
+ * final result; the scripted call reveals words one at a time to look the same.
+ */
+export type InterimTurn = { index: number; speaker: Speaker; words: string[]; shown: number; at: string };
+
+/** Playbooks built so far. The AI may suggest others; the agent can't pick them yet. */
+export const AVAILABLE_ISSUE_TYPES: IssueType[] = ["unrecognised_charge"];
+
+export const ISSUE_LABELS: Record<IssueType, string> = {
+  unrecognised_charge: "Unrecognised charge",
+  failed_transaction: "Failed transaction",
+  fee_query: "Fee query",
+  unknown: "Not clear yet",
+};
+
+const WORD_MS = 110;
+const TURN_GAP_MS = 700;
 
 const message = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong");
 
@@ -50,12 +71,16 @@ export function useCallFlow() {
   const [briefing, setBriefing] = useState<AiResult<BriefingSummary> | null>(null);
 
   const [transcript, setTranscript] = useState<Turn[]>([]);
+  const [interim, setInterim] = useState<InterimTurn | null>(null);
   const [playing, setPlaying] = useState(false);
+  // A finished turn is being sent to the server (and analysed, for customer turns).
+  const [sending, setSending] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [facts, setFacts] = useState<ExtractedFacts | null>(null);
   const [matches, setMatches] = useState<TransactionMatch[]>([]);
   const [extractError, setExtractError] = useState<string | null>(null);
 
+  const [chosenIssueType, setChosenIssueType] = useState<IssueType | null>(null);
   const [selectedTxnId, setSelectedTxnId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState<ConfirmResult | null>(null);
@@ -69,8 +94,9 @@ export function useCallFlow() {
   const [ended, setEnded] = useState(false);
   const [auditVersion, setAuditVersion] = useState(0);
 
-  const busy = useRef(false);
   const callIdRef = useRef<string | null>(null);
+  // Index of the last script turn committed, so an effect re-run can't send a turn twice.
+  const committedRef = useRef(-1);
 
   useEffect(() => {
     api
@@ -86,6 +112,7 @@ export function useCallFlow() {
 
   const clear = useCallback(() => {
     callIdRef.current = null;
+    committedRef.current = -1;
     setCall(null);
     setStartedAt(null);
     setVerify({ attemptsLeft: 3, locked: false, error: null });
@@ -93,11 +120,14 @@ export function useCallFlow() {
     setContext(null);
     setBriefing(null);
     setTranscript([]);
+    setInterim(null);
     setPlaying(false);
+    setSending(false);
     setAnalyzing(false);
     setFacts(null);
     setMatches([]);
     setExtractError(null);
+    setChosenIssueType(null);
     setSelectedTxnId(null);
     setConfirming(false);
     setConfirmed(null);
@@ -157,18 +187,20 @@ export function useCallFlow() {
     [call],
   );
 
-  // Scripted call playback: sends one turn at a time, waiting for each to be analysed.
-  const sendNextTurn = useCallback(async () => {
+  // Scripted call playback, shaped like a streaming recogniser: each turn streams in word by word
+  // (interim), then becomes final and is sent to the server, which analyses customer turns.
+  const commitTurn = useCallback(async (turn: InterimTurn) => {
     const callId = callIdRef.current;
-    if (!call || !callId || busy.current) return false;
-    const next = call.script[transcript.length];
-    if (!next) return false;
-    busy.current = true;
-    setTranscript((t) => [...t, { ...next, at: new Date().toISOString() }]);
-    if (next.speaker === "customer") setAnalyzing(true);
+    if (!callId || committedRef.current >= turn.index) return;
+    committedRef.current = turn.index;
+    const final: Turn = { speaker: turn.speaker, text: turn.words.join(" "), at: turn.at };
+    setInterim(null);
+    setTranscript((t) => [...t, final]);
+    setSending(true);
+    if (turn.speaker === "customer") setAnalyzing(true);
     try {
-      const r = await api.turn(callId, next);
-      if (callIdRef.current !== callId) return false;
+      const r = await api.turn(callId, { speaker: final.speaker, text: final.text });
+      if (callIdRef.current !== callId) return;
       if (r.analysis) {
         setFacts(r.analysis.facts);
         setMatches(r.analysis.matches);
@@ -177,33 +209,81 @@ export function useCallFlow() {
         if (top) setSelectedTxnId((current) => current ?? top.transactionId);
       }
     } catch (e) {
-      toast.error(message(e));
+      if (callIdRef.current !== callId) return;
+      // The server never stored this turn: take it back off the screen so a retry resends it.
+      committedRef.current = turn.index - 1;
+      setTranscript((t) => t.slice(0, -1));
       setPlaying(false);
+      toast.error(message(e));
     } finally {
-      busy.current = false;
-      setAnalyzing(false);
+      if (callIdRef.current === callId) {
+        setSending(false);
+        setAnalyzing(false);
+      }
     }
-    return true;
-  }, [call, transcript.length]);
+  }, []);
 
+  const startNextTurn = useCallback(
+    (instant: boolean) => {
+      if (!call || interim || sending) return;
+      const index = transcript.length;
+      const next = call.script[index];
+      if (!next) return;
+      const turn: InterimTurn = {
+        index,
+        speaker: next.speaker,
+        words: next.text.split(/\s+/),
+        shown: 0,
+        at: new Date().toISOString(),
+      };
+      if (instant) void commitTurn(turn);
+      else setInterim(turn);
+    },
+    [call, interim, sending, transcript.length, commitTurn],
+  );
+
+  // Reveal the interim turn word by word while playing; the last word makes it final.
   useEffect(() => {
-    if (!playing || !call || transcript.length >= call.script.length) return;
-    const t = setTimeout(() => void sendNextTurn(), transcript.length === 0 ? 200 : TURN_DELAY_MS);
+    if (!interim || !playing) return;
+    const t = setTimeout(() => {
+      if (interim.shown + 1 >= interim.words.length) void commitTurn(interim);
+      else setInterim({ ...interim, shown: interim.shown + 1 });
+    }, WORD_MS);
     return () => clearTimeout(t);
-  }, [playing, call, transcript.length, sendNextTurn]);
+  }, [interim, playing, commitTurn]);
+
+  // Start the next turn once the previous one has been sent. Waiting on `sending` (state, not a ref)
+  // means a slow AI response delays playback instead of stalling it.
+  useEffect(() => {
+    if (!playing || !call || interim || sending || transcript.length >= call.script.length) return;
+    const t = setTimeout(() => startNextTurn(false), transcript.length === 0 ? 300 : TURN_GAP_MS);
+    return () => clearTimeout(t);
+  }, [playing, call, interim, sending, transcript.length, startNextTurn]);
+
+  /** Finish the line being spoken, or play the next line in full. */
+  const step = useCallback(() => {
+    if (interim) void commitTurn(interim);
+    else startNextTurn(true);
+  }, [interim, startNextTurn, commitTurn]);
+
+  const suggestedIssueType = facts?.suggestedIssueType ?? null;
+  // The agent's choice wins; otherwise the AI's suggestion, if that playbook exists.
+  const issueType =
+    chosenIssueType ??
+    (suggestedIssueType && AVAILABLE_ISSUE_TYPES.includes(suggestedIssueType) ? suggestedIssueType : null);
 
   const confirmTransaction = useCallback(async () => {
-    if (!call || !selectedTxnId) return;
+    if (!call || !selectedTxnId || !issueType) return;
     setConfirming(true);
     try {
-      setConfirmed(await api.confirm(call.callId, { transactionId: selectedTxnId, issueType: "unrecognised_charge" }));
+      setConfirmed(await api.confirm(call.callId, { transactionId: selectedTxnId, issueType }));
       bumpAudit();
     } catch (e) {
       toast.error(message(e));
     } finally {
       setConfirming(false);
     }
-  }, [call, selectedTxnId]);
+  }, [call, selectedTxnId, issueType]);
 
   const submitDispute = useCallback(
     async (form: DisputeForm) => {
@@ -234,6 +314,7 @@ export function useCallFlow() {
     if (!call) return;
     setWrapUpRequested(true);
     setPlaying(false);
+    setInterim(null);
     try {
       setWrapUp(await api.wrapUpDraft(call.callId));
     } catch (e) {
@@ -278,7 +359,7 @@ export function useCallFlow() {
           ? "act"
           : selectedTxnId && (matches.length > 0 || scriptDone)
             ? "confirm"
-            : verified && transcript.length > 0
+            : verified && (transcript.length > 0 || interim)
               ? "listen"
               : verified
                 ? "brief"
@@ -295,6 +376,7 @@ export function useCallFlow() {
     context,
     briefing,
     transcript,
+    interim,
     // Playback stops by itself at the end of the script.
     playing: playing && !scriptDone,
     analyzing,
@@ -302,6 +384,8 @@ export function useCallFlow() {
     facts,
     matches,
     extractError,
+    issueType,
+    suggestedIssueType,
     selectedTxnId,
     confirming,
     confirmed,
@@ -316,7 +400,8 @@ export function useCallFlow() {
       submitVerification,
       play: () => setPlaying(true),
       pause: () => setPlaying(false),
-      step: () => void sendNextTurn(),
+      step,
+      selectIssueType: (t: IssueType) => !confirmed && setChosenIssueType(t),
       selectTransaction: (id: string) => !confirmed && setSelectedTxnId(id),
       confirmTransaction,
       submitDispute,

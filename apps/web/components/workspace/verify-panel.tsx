@@ -91,6 +91,11 @@ export function VerifyPanel({ flow }: { flow: CallFlow }) {
                   </AlertDescription>
                 </Alert>
               )}
+              {verify.locked && (
+                <Button type="button" variant="outline" onClick={flow.actions.newCall}>
+                  End call
+                </Button>
+              )}
 
               <Button type="submit" disabled={verify.locked || submitting || dob === "" || last4.length !== 4}>
                 {submitting ? <Spinner /> : <ShieldCheck />}

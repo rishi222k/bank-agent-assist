@@ -33,6 +33,8 @@ GEMINI_API_KEY=...                # from Google AI Studio
 # GOOGLE_CLOUD_LOCATION=global
 ```
 
+The demo state (calls, cases, audit log) lives in one in-memory service that survives hot reloads, so restart `npm run dev` after changing `packages/core`.
+
 **Demo:** Start call → verify with `1990-04-14` and `4242` (or click **Fill in**) → Play call → Customer confirmed this charge → Review and approve → Wrap up call. Run it again without resetting to see the "case already open" path. **Reset demo data** (in the ⋮ menu) clears all cases. The theme follows your OS; the sun/moon button overrides it.
 
 ## Repo layout

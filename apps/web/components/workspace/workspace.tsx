@@ -30,7 +30,7 @@ export function Workspace() {
             <div className="border-b bg-background px-4 py-2.5 xl:hidden">
               <CompactStepper stage={flow.stage} />
             </div>
-            <main className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)_minmax(360px,420px)] lg:overflow-hidden">
+            <main className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)_minmax(300px,340px)] lg:overflow-hidden xl:grid-cols-[minmax(300px,360px)_minmax(0,1fr)_minmax(360px,420px)]">
               <Column className="lg:border-r">
                 <PanelHeader
                   icon={UserRound}

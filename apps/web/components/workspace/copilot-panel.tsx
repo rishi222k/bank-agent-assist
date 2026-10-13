@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import type { DisputeForm, DisputeReason, Transaction } from "@baa/core";
+import type { DisputeForm, DisputeReason, IssueType, Transaction } from "@baa/core";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,16 +40,16 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { CallFlow } from "@/lib/use-call-flow";
+import { AVAILABLE_ISSUE_TYPES, ISSUE_LABELS, type CallFlow } from "@/lib/use-call-flow";
 import { cn, usd } from "@/lib/utils";
 import { EvidenceChips, useEvidence } from "./evidence";
 import { AiLabel, Amount, CheckIcon, Eyebrow, TransactionSummary } from "./kit";
 
-const ISSUE_TYPES = [
-  { id: "unrecognised_charge", label: "Unrecognised charge", available: true },
-  { id: "failed_transaction", label: "Failed transaction", available: false },
-  { id: "fee_query", label: "Fee query", available: false },
-] as const;
+const ISSUE_TYPES = (["unrecognised_charge", "failed_transaction", "fee_query"] as const).map((id) => ({
+  id,
+  label: ISSUE_LABELS[id],
+  available: AVAILABLE_ISSUE_TYPES.includes(id),
+}));
 
 const REASONS: { id: DisputeReason; label: string }[] = [
   { id: "not_authorised", label: "Customer didn’t authorise it" },
@@ -93,7 +93,7 @@ export function CopilotPanel({ flow }: { flow: CallFlow }) {
     <div className="space-y-4">
       {!confirmed ? (
         <div ref={stage === "confirm" ? latest : undefined} className="space-y-4">
-          <IssueTypeCard />
+          <IssueTypeCard flow={flow} />
           {waitingForMatch ? <ListeningCard /> : <MatchCard flow={flow} selected={selected} />}
         </div>
       ) : (
@@ -148,27 +148,49 @@ function PanelEmpty({ icon: Icon, title, text }: { icon: React.ComponentType; ti
   );
 }
 
-function IssueTypeCard() {
+function IssueTypeCard({ flow }: { flow: CallFlow }) {
+  const { issueType, suggestedIssueType, facts } = flow;
+  const suggestionUnavailable =
+    suggestedIssueType && suggestedIssueType !== "unknown" && !AVAILABLE_ISSUE_TYPES.includes(suggestedIssueType);
+  const description = suggestionUnavailable
+    ? `The AI thinks this is a ${ISSUE_LABELS[suggestedIssueType].toLowerCase()}. That playbook isn’t built yet, so handle it manually or pick another.`
+    : issueType && issueType === suggestedIssueType
+      ? "Suggested from the conversation. Change it if it’s wrong."
+      : facts
+        ? "Not clear from the conversation yet. Pick one."
+        : "Pick the issue the customer is calling about.";
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Issue type</CardTitle>
-        <CardDescription>Pre-selected from the conversation. Change it if it’s wrong.</CardDescription>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
         <ToggleGroup
           type="single"
-          value="unrecognised_charge"
+          value={issueType ?? ""}
+          onValueChange={(v) => v && flow.actions.selectIssueType(v as IssueType)}
           variant="outline"
           size="sm"
           spacing={1.5}
           className="flex-wrap"
         >
-          {ISSUE_TYPES.map((t) =>
-            t.available ? (
-              <ToggleGroupItem key={t.id} value={t.id} className={cn("rounded-full", SEGMENT_ON)}>
+          {ISSUE_TYPES.map((t) => {
+            const suggested = t.id === suggestedIssueType;
+            const item = (
+              <ToggleGroupItem
+                key={t.id}
+                value={t.id}
+                disabled={!t.available}
+                className={cn("rounded-full", t.available && SEGMENT_ON)}
+              >
+                {suggested && <Sparkles />}
                 {t.label}
               </ToggleGroupItem>
+            );
+            return t.available ? (
+              item
             ) : (
               <Tooltip key={t.id}>
                 <TooltipTrigger asChild>
@@ -176,15 +198,13 @@ function IssueTypeCard() {
                     tabIndex={0}
                     className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
-                    <ToggleGroupItem value={t.id} disabled className="rounded-full">
-                      {t.label}
-                    </ToggleGroupItem>
+                    {item}
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>Playbook coming after M0</TooltipContent>
               </Tooltip>
-            ),
-          )}
+            );
+          })}
         </ToggleGroup>
       </CardContent>
     </Card>
@@ -283,10 +303,18 @@ function MatchCard({ flow, selected }: { flow: CallFlow; selected: Transaction |
           </div>
         )}
       </CardContent>
-      <CardFooter>
-        <Button className="w-full" disabled={!selected || flow.confirming} onClick={flow.actions.confirmTransaction}>
+      <CardFooter className="flex-col gap-2">
+        <Button
+          className="w-full"
+          disabled={!selected || !flow.issueType || flow.confirming}
+          onClick={flow.actions.confirmTransaction}
+        >
           {flow.confirming ? <Spinner /> : <CircleCheck />}
           Customer confirmed this charge
+        </Button>
+        {/* The customer may hang up or the call may need no action: the agent can always wrap up. */}
+        <Button variant="ghost" size="sm" className="w-full text-muted-foreground" onClick={flow.actions.startWrapUp}>
+          Wrap up without a case
         </Button>
       </CardFooter>
     </Card>
@@ -299,7 +327,9 @@ function ConfirmedSummary({ flow }: { flow: CallFlow }) {
     <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-xs">
       <CircleCheck className="size-4 shrink-0 text-success" />
       <div className="min-w-0 flex-1">
-        <div className="text-xs text-muted-foreground">Unrecognised charge · confirmed with customer</div>
+        <div className="text-xs text-muted-foreground">
+          {ISSUE_LABELS[flow.confirmed!.issueType]} · confirmed with customer
+        </div>
         <div className="truncate text-sm font-medium">
           <Amount value={t.amount} /> · {t.merchant}
         </div>
@@ -416,14 +446,18 @@ function RecommendationCard({ flow }: { flow: CallFlow }) {
 function DisputeFormCard({ flow, transaction }: { flow: CallFlow; transaction: Transaction }) {
   const rec = flow.confirmed!.recommendation;
   const prefill = rec?.ok ? rec.data.formPrefill : null;
-  const [form, setForm] = useState<DisputeForm>({
+  // Card possession decides whether the card is treated as compromised (DSP-1.6), so it's never
+  // assumed: it starts from what the customer said, or empty until the agent asks.
+  const [form, setForm] = useState<Omit<DisputeForm, "cardInPossession"> & { cardInPossession: boolean | null }>({
     transactionId: transaction.id,
     reason: prefill?.reason ?? (flow.facts?.customerRecognises === false ? "not_authorised" : "not_recognised"),
     customerStatement: prefill?.customerStatement ?? "",
-    cardInPossession: flow.facts?.cardInPossession ?? true,
+    cardInPossession: flow.facts?.cardInPossession ?? null,
   });
   const [reviewing, setReviewing] = useState(false);
   const statementOk = form.customerStatement.trim().length >= 10;
+  const complete = statementOk && form.cardInPossession !== null;
+  const compromised = form.cardInPossession === false;
   const reasonLabel = REASONS.find((r) => r.id === form.reason)?.label;
 
   return (
@@ -482,7 +516,7 @@ function DisputeFormCard({ flow, transaction }: { flow: CallFlow; transaction: T
               type="single"
               variant="outline"
               size="sm"
-              value={form.cardInPossession ? "yes" : "no"}
+              value={form.cardInPossession === null ? "" : form.cardInPossession ? "yes" : "no"}
               onValueChange={(v) => v && setForm({ ...form, cardInPossession: v === "yes" })}
             >
               <ToggleGroupItem value="yes" className={cn("px-4", SEGMENT_ON)}>
@@ -493,10 +527,11 @@ function DisputeFormCard({ flow, transaction }: { flow: CallFlow; transaction: T
               </ToggleGroupItem>
             </ToggleGroup>
           </Field>
+          {compromised && <CompromisedCardAlert />}
         </FieldGroup>
       </CardContent>
       <CardFooter>
-        <Button className="w-full" disabled={!statementOk} onClick={() => setReviewing(true)}>
+        <Button className="w-full" disabled={!complete} onClick={() => setReviewing(true)}>
           Review and approve <ArrowRight />
         </Button>
       </CardFooter>
@@ -517,7 +552,7 @@ function DisputeFormCard({ flow, transaction }: { flow: CallFlow; transaction: T
               <dt className="text-muted-foreground">Reason</dt>
               <dd>{reasonLabel}</dd>
               <dt className="text-muted-foreground">Card with customer</dt>
-              <dd>{form.cardInPossession ? "Yes" : "No"}</dd>
+              <dd>{form.cardInPossession ? "Yes" : "No, fraud escalation required"}</dd>
               <dt className="text-muted-foreground">Statement</dt>
               <dd className="leading-relaxed">“{form.customerStatement.trim()}”</dd>
               <dt className="text-muted-foreground">Policy checks</dt>
@@ -533,7 +568,9 @@ function DisputeFormCard({ flow, transaction }: { flow: CallFlow; transaction: T
             <Button
               disabled={flow.submitting}
               onClick={async () => {
-                if (await flow.actions.submitDispute(form)) setReviewing(false);
+                if (form.cardInPossession === null) return;
+                if (await flow.actions.submitDispute({ ...form, cardInPossession: form.cardInPossession }))
+                  setReviewing(false);
               }}
             >
               {flow.submitting ? <Spinner /> : <ShieldCheck />}
@@ -543,6 +580,19 @@ function DisputeFormCard({ flow, transaction }: { flow: CallFlow; transaction: T
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+function CompromisedCardAlert() {
+  return (
+    <Alert variant="warning">
+      <CircleAlert />
+      <AlertTitle>Treat the card as compromised</AlertTitle>
+      <AlertDescription className="space-y-1.5">
+        <p>The card isn’t with the customer. Escalate to the fraud team; the case is flagged for fraud review.</p>
+        <EvidenceChips ids={["DSP-1.6"]} />
+      </AlertDescription>
+    </Alert>
   );
 }
 

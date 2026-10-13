@@ -23,8 +23,10 @@ on:
         required: true
         type: string
 
+# Keyed on the event too: a run started by a fork's review (read-only token, can't publish) must
+# never cancel a pull_request_target run that is about to publish.
 concurrency:
-  group: review-required-${{ github.event.pull_request.number || inputs.pr }}
+  group: review-required-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
 permissions:
@@ -48,12 +50,13 @@ jobs:
         run: |
           set -euo pipefail
           data=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json number,headRefOid,baseRefName,state,author)
+            --json number,headRefOid,baseRefName,baseRefOid,state,author)
           test "$(jq -r .state <<<"$data")" = OPEN
           test "$(jq -r .baseRefName <<<"$data")" = main
           {
             echo "number=$(jq -r .number <<<"$data")"
             echo "sha=$(jq -r .headRefOid <<<"$data")"
+            echo "base=$(jq -r .baseRefOid <<<"$data")"
             echo "author=$(jq -r .author.login <<<"$data")"
           } >> "$GITHUB_OUTPUT"
 
@@ -70,16 +73,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
           AUTHOR: ${{ steps.pr.outputs.author }}
         run: |
           set -euo pipefail
           repo="/repos/$GITHUB_REPOSITORY"
           gh api --paginate --slurp "$repo/pulls/$PR/reviews" > "$RUNNER_TEMP/reviews.json"
-          # Old and new paths, so a rename out of the app can't pass as docs-only, and the PR's own
-          # file count, so a truncated list (GitHub stops at 3000 files) can't either.
-          gh api --paginate --slurp "$repo/pulls/$PR/files" \
-            | jq '[.[][] | {filename, previous_filename}]' > "$RUNNER_TEMP/files.json"
-          total=$(gh api "$repo/pulls/$PR" --jq .changed_files)
+          # The files changed by exactly the commit being judged (base...SHA), never the PR's current
+          # file list, which can move under us. Old and new paths, so a rename out of the app can't
+          # pass as docs-only. The compare API lists at most 300 files; a full page counts as
+          # truncated, and a truncated list never passes as docs-only.
+          gh api "$repo/compare/$BASE...$SHA" \
+            | jq '[.files[] | {filename, previous_filename}]' > "$RUNNER_TEMP/files.json"
+          total=$(jq 'if length >= 300 then -1 else length end' "$RUNNER_TEMP/files.json")
 
           # Who added the skip label (most recent "labeled" event), and their access level.
           skip='null'
@@ -104,6 +110,7 @@ jobs:
       - name: Decide and publish
         env:
           GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.pr.outputs.sha }}
         run: |
           set -euo pipefail
@@ -114,6 +121,13 @@ jobs:
             --output "$RUNNER_TEMP/gate.json"
           state=$(jq -r .state "$RUNNER_TEMP/gate.json")
           description=$(jq -r .description "$RUNNER_TEMP/gate.json")
+          # If the PR moved while we were judging, this result is about an old commit: the run for the
+          # new head publishes instead.
+          current=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          if [ "$current" != "$SHA" ]; then
+            echo "PR head moved from $SHA to $current; not publishing."
+            exit 0
+          fi
           gh api --method POST "/repos/$GITHUB_REPOSITORY/statuses/$SHA" \
             -f state="$state" \
             -f context="review-required" \

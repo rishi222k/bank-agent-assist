@@ -101,8 +101,9 @@ Collaborators choose how much review a change needs, so nobody is locked out.
    isn't the PR author (their latest review on that head).
 3. **`skip-review` label:** added by someone with write access. The status
    names who skipped review, so the choice is visible.
-4. **Docs only:** every changed file is Markdown or under `docs/`, and nothing
-   under `.github/`.
+4. **Docs only:** every file changed by the exact head commit (old and new
+   paths) is Markdown or under `docs/`, nothing is under `.github/`, and no
+   agent-instruction file (`AGENTS.md`, `CLAUDE.md`) changes.
 
 The Claude reviewer runs automatically on ready pull requests from branches in
 this repository and can be dispatched by hand. It refuses fork PRs, because it

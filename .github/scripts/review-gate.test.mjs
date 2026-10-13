@@ -170,3 +170,11 @@ test("b. a later comment doesn't cancel an approval; a review from a deleted acc
   ];
   assert.equal(decide(profile, { ...base, reviews }).path, "approval");
 });
+
+test("d. agent instructions and truncated compare lists are not docs-only", () => {
+  assert.equal(isDocsOnly(["AGENTS.md"]), false);
+  assert.equal(isDocsOnly(["apps/web/CLAUDE.md"]), false);
+  assert.equal(isDocsOnly(["CONTRIBUTING.md"]), true);
+  // The workflow passes -1 when the compare API returned a full (possibly truncated) page.
+  assert.equal(decide(profile, { ...base, files: [{ filename: "docs/a.md" }], filesTotal: -1 }).state, "failure");
+});

@@ -36,9 +36,13 @@ const newestFirst = (left, right) =>
   String(right.submitted_at ?? "").localeCompare(String(left.submitted_at ?? "")) ||
   Number(right.id ?? 0) - Number(left.id ?? 0);
 
+// Agents follow AGENTS.md / CLAUDE.md as instructions, so they're treated as code.
+const AGENT_INSTRUCTIONS = new Set(["AGENTS.md", "CLAUDE.md"]);
+
 const isDocPath = (path) =>
   typeof path === "string" &&
   !path.startsWith(".github/") &&
+  !AGENT_INSTRUCTIONS.has(path.split("/").at(-1)) &&
   !path.split("/").includes("..") &&
   (path.startsWith("docs/") || /\.md$/i.test(path));
 
@@ -47,7 +51,7 @@ const isDocPath = (path) =>
  * paths are docs (moving code into docs/ deletes it from the app), and a truncated file list
  * (GitHub stops listing at 3000 files) never counts as docs-only.
  * @param files [{filename, previous_filename?}] (plain path strings are accepted too)
- * @param total the PR's changed-file count, when known
+ * @param total how many files the commit changes (negative when the list was truncated)
  */
 export function isDocsOnly(files, total = files.length) {
   return (

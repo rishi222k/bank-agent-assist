@@ -6,7 +6,8 @@ import { briefingPrompt, extractPrompt, recommendPrompt, wrapUpPrompt } from "./
 
 const TIMEOUT_MS = 20_000;
 
-function jsonSchemaFor(schema: z.ZodType) {
+/** The JSON Schema sent to Gemini as `responseJsonSchema`. Exported so tests can check it without a key. */
+export function jsonSchemaFor(schema: z.ZodType) {
   const { $schema: _ignored, ...rest } = z.toJSONSchema(schema) as Record<string, unknown>;
   return rest;
 }
@@ -17,15 +18,24 @@ function jsonSchemaFor(schema: z.ZodType) {
  */
 export class GeminiProvider implements AiProvider {
   readonly name = "gemini" as const;
-  private client: GoogleGenAI;
+  private client: Pick<GoogleGenAI, "models">;
 
   constructor(
     readonly model: string,
-    opts: { apiKey?: string; vertexai?: boolean; project?: string; location?: string },
+    opts: {
+      apiKey?: string;
+      vertexai?: boolean;
+      project?: string;
+      location?: string;
+      /** Injected in tests so the request and response handling run without a key. */
+      client?: Pick<GoogleGenAI, "models">;
+    },
   ) {
-    this.client = opts.vertexai
-      ? new GoogleGenAI({ vertexai: true, project: opts.project, location: opts.location ?? "global" })
-      : new GoogleGenAI({ apiKey: opts.apiKey });
+    this.client =
+      opts.client ??
+      (opts.vertexai
+        ? new GoogleGenAI({ vertexai: true, project: opts.project, location: opts.location ?? "global" })
+        : new GoogleGenAI({ apiKey: opts.apiKey }));
   }
 
   private async generate<S extends z.ZodType>(

@@ -75,6 +75,11 @@ export interface Store {
   idempotent(key: string): IdempotentRecord | undefined;
   rememberIdempotent(key: string, record: IdempotentRecord): void;
 
+  /** Failed verification attempts per customer, across calls (ISO timestamps). */
+  verificationFailures(customerId: string): string[];
+  recordVerificationFailure(customerId: string, at: string): void;
+  clearVerificationFailures(customerId: string): void;
+
   appendAudit(e: Omit<AuditEvent, "id" | "at">): AuditEvent;
   audit(callId?: string): AuditEvent[];
 
@@ -85,6 +90,7 @@ export class MemoryStore implements Store {
   private data = loadFixtures();
   private calls = new Map<string, CallSession>();
   private idem = new Map<string, IdempotentRecord>();
+  private verifyFailures = new Map<string, string[]>();
   private events: AuditEvent[] = [];
   private seq = { case: 0, event: 0 };
 
@@ -143,6 +149,16 @@ export class MemoryStore implements Store {
     this.idem.set(key, record);
   }
 
+  verificationFailures(customerId: string) {
+    return [...(this.verifyFailures.get(customerId) ?? [])];
+  }
+  recordVerificationFailure(customerId: string, at: string) {
+    this.verifyFailures.set(customerId, [...(this.verifyFailures.get(customerId) ?? []), at]);
+  }
+  clearVerificationFailures(customerId: string) {
+    this.verifyFailures.delete(customerId);
+  }
+
   appendAudit(e: Omit<AuditEvent, "id" | "at">) {
     const event: AuditEvent = { ...e, id: `evt_${++this.seq.event}`, at: new Date().toISOString() };
     this.events.push(event);
@@ -156,6 +172,7 @@ export class MemoryStore implements Store {
     this.data = loadFixtures();
     this.calls.clear();
     this.idem.clear();
+    this.verifyFailures.clear();
     this.events = [];
     this.seq = { case: 0, event: 0 };
   }

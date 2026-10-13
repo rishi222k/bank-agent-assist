@@ -138,6 +138,20 @@ export function useCallFlow() {
     setEnded(false);
   }, []);
 
+  /**
+   * Shows an error. If the server no longer has the call (the sandbox expired or the server
+   * restarted), the call can't continue, so the workspace starts over.
+   */
+  const fail = useCallback(
+    (e: unknown) => {
+      if (e instanceof ApiError && e.code === "call_not_found") {
+        clear();
+        toast.error("This demo call has expired. Start a new call.");
+      } else toast.error(message(e));
+    },
+    [clear],
+  );
+
   const startCall = useCallback(
     async (scenarioId: string) => {
       clear();
@@ -146,14 +160,20 @@ export function useCallFlow() {
         callIdRef.current = started.callId;
         idempotencyKey.current = crypto.randomUUID();
         setCall(started);
+        setVerify({
+          ...started.verification,
+          error: started.verification.locked
+            ? "Too many failed attempts for this customer. Escalate to a team lead."
+            : null,
+        });
         setAiInfo(started.ai);
         setStartedAt(Date.now());
         bumpAudit();
       } catch (e) {
-        toast.error(message(e));
+        fail(e);
       }
     },
-    [clear],
+    [clear, fail],
   );
 
   const submitVerification = useCallback(
@@ -166,7 +186,9 @@ export function useCallFlow() {
           setVerify({
             attemptsLeft: r.attemptsLeft,
             locked: r.locked,
-            error: r.locked ? "Too many failed attempts. Escalate to a team lead." : "Details don't match our records.",
+            error: r.locked
+              ? "Too many failed attempts for this customer. Escalate to a team lead."
+              : "Details don't match our records.",
           });
           return;
         }
@@ -177,51 +199,54 @@ export function useCallFlow() {
         api
           .briefing(call.callId)
           .then(setBriefing)
-          .catch((e) => toast.error(message(e)));
+          .catch((e) => fail(e));
       } catch (e) {
         if (e instanceof ApiError && e.code === "verification_locked")
           setVerify({ attemptsLeft: 0, locked: true, error: e.message });
-        else toast.error(message(e));
+        else fail(e);
       }
     },
-    [call],
+    [call, fail],
   );
 
   // Scripted call playback, shaped like a streaming recogniser: each turn streams in word by word
   // (interim), then becomes final and is sent to the server, which analyses customer turns.
-  const commitTurn = useCallback(async (turn: InterimTurn) => {
-    const callId = callIdRef.current;
-    if (!callId || committedRef.current >= turn.index) return;
-    committedRef.current = turn.index;
-    const final: Turn = { speaker: turn.speaker, text: turn.words.join(" "), at: turn.at };
-    setInterim(null);
-    setTranscript((t) => [...t, final]);
-    setSending(true);
-    if (turn.speaker === "customer") setAnalyzing(true);
-    try {
-      const r = await api.turn(callId, { speaker: final.speaker, text: final.text });
-      if (callIdRef.current !== callId) return;
-      if (r.analysis) {
-        setFacts(r.analysis.facts);
-        setMatches(r.analysis.matches);
-        setExtractError(r.analysis.ai.ok ? null : r.analysis.ai.error);
-        const top = r.analysis.matches[0];
-        if (top) setSelectedTxnId((current) => current ?? top.transactionId);
+  const commitTurn = useCallback(
+    async (turn: InterimTurn) => {
+      const callId = callIdRef.current;
+      if (!callId || committedRef.current >= turn.index) return;
+      committedRef.current = turn.index;
+      const final: Turn = { speaker: turn.speaker, text: turn.words.join(" "), at: turn.at };
+      setInterim(null);
+      setTranscript((t) => [...t, final]);
+      setSending(true);
+      if (turn.speaker === "customer") setAnalyzing(true);
+      try {
+        const r = await api.turn(callId, { speaker: final.speaker, text: final.text });
+        if (callIdRef.current !== callId) return;
+        if (r.analysis) {
+          setFacts(r.analysis.facts);
+          setMatches(r.analysis.matches);
+          setExtractError(r.analysis.ai.ok ? null : r.analysis.ai.error);
+          const top = r.analysis.matches[0];
+          if (top) setSelectedTxnId((current) => current ?? top.transactionId);
+        }
+      } catch (e) {
+        if (callIdRef.current !== callId) return;
+        // The server never stored this turn: take it back off the screen so a retry resends it.
+        committedRef.current = turn.index - 1;
+        setTranscript((t) => t.slice(0, -1));
+        setPlaying(false);
+        fail(e);
+      } finally {
+        if (callIdRef.current === callId) {
+          setSending(false);
+          setAnalyzing(false);
+        }
       }
-    } catch (e) {
-      if (callIdRef.current !== callId) return;
-      // The server never stored this turn: take it back off the screen so a retry resends it.
-      committedRef.current = turn.index - 1;
-      setTranscript((t) => t.slice(0, -1));
-      setPlaying(false);
-      toast.error(message(e));
-    } finally {
-      if (callIdRef.current === callId) {
-        setSending(false);
-        setAnalyzing(false);
-      }
-    }
-  }, []);
+    },
+    [fail],
+  );
 
   const startNextTurn = useCallback(
     (instant: boolean) => {
@@ -279,11 +304,11 @@ export function useCallFlow() {
       setConfirmed(await api.confirm(call.callId, { transactionId: selectedTxnId, issueType }));
       bumpAudit();
     } catch (e) {
-      toast.error(message(e));
+      fail(e);
     } finally {
       setConfirming(false);
     }
-  }, [call, selectedTxnId, issueType]);
+  }, [call, selectedTxnId, issueType, fail]);
 
   const submitDispute = useCallback(
     async (form: DisputeForm) => {
@@ -300,14 +325,14 @@ export function useCallFlow() {
           .catch(() => {});
         return true;
       } catch (e) {
-        toast.error(message(e));
+        fail(e);
         return false;
       } finally {
         setSubmitting(false);
         bumpAudit();
       }
     },
-    [call],
+    [call, fail],
   );
 
   const startWrapUp = useCallback(async () => {
@@ -318,9 +343,9 @@ export function useCallFlow() {
     try {
       setWrapUp(await api.wrapUpDraft(call.callId));
     } catch (e) {
-      toast.error(message(e));
+      fail(e);
     }
-  }, [call]);
+  }, [call, fail]);
 
   const saveWrapUp = useCallback(
     async (notes: string) => {
@@ -331,10 +356,10 @@ export function useCallFlow() {
         bumpAudit();
         toast.success("Notes saved. Call ended.");
       } catch (e) {
-        toast.error(message(e));
+        fail(e);
       }
     },
-    [call],
+    [call, fail],
   );
 
   const resetDemo = useCallback(async () => {
@@ -343,9 +368,9 @@ export function useCallFlow() {
       clear();
       toast.success("Demo data reset");
     } catch (e) {
-      toast.error(message(e));
+      fail(e);
     }
-  }, [clear]);
+  }, [clear, fail]);
 
   const scriptDone = !!call && transcript.length >= call.script.length;
 

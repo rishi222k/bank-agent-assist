@@ -55,6 +55,9 @@ linters already enforce are never blocking.
 
 ## Evidence contract
 
+Step-by-step instructions for whoever writes the review (an agent in a fresh
+session, or a person): [REVIEWER.md](REVIEWER.md).
+
 A formal review starts with the following contiguous block:
 
 ```text

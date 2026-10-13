@@ -10,9 +10,15 @@ When a customer calls, the assistant verifies the caller, briefs the agent, foll
 
 <sub>Light and [dark](docs/screenshots/m0-dark.png) themes follow your OS. More: [match](docs/screenshots/m0-match.png) · [case created](docs/screenshots/m0-case-created.png) · [audit log](docs/screenshots/m0-audit.png) · [case already open](docs/screenshots/m0-existing-case.png)</sub>
 
-## Status: M0 prototype
+## Status
 
-Scenario A runs end to end: a customer calls about a $129 charge she doesn't recognise, and the call ends in a dispute case. See [docs/M0.md](docs/M0.md).
+M0 is complete and M1 is in progress. Scenario A runs end to end: a customer calls about a $129 charge she doesn't recognise, and the call ends in a dispute case. Since M0:
+- The transcript streams like live speech-to-text, with a band per speaker.
+- A microphone mode uses the browser's speech recognition.
+- Each visitor gets an isolated demo.
+- Exception paths are hardened.
+
+What's done and what's next: [docs/STATUS.md](docs/STATUS.md). The flow step by step: [docs/M0.md](docs/M0.md).
 
 ## Run it
 
@@ -35,7 +41,9 @@ GEMINI_API_KEY=...                # from Google AI Studio
 
 Each visitor gets their own in-memory demo sandbox (calls, cases, audit log), so one person's **Reset demo data** never touches another's. Sandboxes survive hot reloads, so restart `npm run dev` after changing `packages/core`. Deploying: [docs/DEPLOY.md](docs/DEPLOY.md).
 
-**Demo:** Start call → verify with `1990-04-14` and `4242` (or click **Fill in**) → Play call → Customer confirmed this charge → Review and approve → Wrap up call. Run it again without resetting to see the "case already open" path. **Reset demo data** (in the ⋮ menu) clears all cases. The theme follows your OS; the sun/moon button overrides it.
+**Demo:** Start call → verify with `1990-04-14` and `4242` (or click **Fill in**) → Play call → Customer confirmed this charge → Review and approve → Wrap up call. Run it again without resetting to see the "case already open" path. **Reset demo data** (in the ⋮ menu) clears your demo. The theme follows your OS; the sun/moon button overrides it.
+
+**Microphone (Chrome):** after verifying, click the microphone button next to Play call, allow mic access, pick who is speaking (Agent or the customer), and talk. The browser transcribes; Chrome sends the audio to Google's speech service.
 
 ## Repo layout
 
@@ -59,12 +67,15 @@ docs/              Scope, M0 flow, brainstorm, references, screenshots
 
 ## Contributing
 
-Work on a branch and open a pull request to `main`. Three checks must pass: `ci`, `secrets` and `review-required`. The review check can be satisfied by an independent review, another collaborator's approval, or the `skip-review` label: see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Dependabot opens weekly grouped dependency updates. Branch protection: [.github/rulesets](.github/rulesets/README.md).
+Using an AI coding agent? It should read **[AGENTS.md](AGENTS.md)** first (Claude Code loads it through `CLAUDE.md`). Work on a branch and open a pull request to `main`. Three checks must pass: `ci`, `secrets` and `review-required`. The review check can be satisfied by an independent review, another collaborator's approval, or the `skip-review` label: see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Dependabot opens weekly grouped dependency updates. Branch protection: [.github/rulesets](.github/rulesets/README.md).
 
 ## Docs
 
 - [docs/SCOPE.md](docs/SCOPE.md): domain, problem statement, proposal and boundaries; Must / Should / Could buckets, milestones, Google services by feature
-- [docs/M0.md](docs/M0.md): the M0 flow, step by step, and the code map
+- [docs/STATUS.md](docs/STATUS.md): what's built against the scope, and what's next
+- [docs/M0.md](docs/M0.md): the call flow, step by step, and the code map
+- [docs/DEPLOY.md](docs/DEPLOY.md): deploying to Cloud Run
+- [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md): how to work here, for agents and people
 - [docs/BRAINSTORM.md](docs/BRAINSTORM.md): the original idea, assessment and architecture options
 - [docs/reference/](docs/reference/): original pitch PDF and the ChatGPT session export
 

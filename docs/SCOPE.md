@@ -1,6 +1,6 @@
 # Bank Agent Assist: project scope
 
-> Status: **draft for team review** (12 Oct 2026). Merges the original pitch ([pitch PDF](reference/pitch-2026-10-09.pdf)), the [brainstorm](BRAINSTORM.md) and the [ChatGPT session](reference/chatgpt-export/chat-transcript.md). Items with ❓ still need a decision.
+> Status: **draft for team review** (12 Oct 2026). Progress against these items: [STATUS.md](STATUS.md). Merges the original pitch ([pitch PDF](reference/pitch-2026-10-09.pdf)), the [brainstorm](BRAINSTORM.md) and the [ChatGPT session](reference/chatgpt-export/chat-transcript.md). Items with ❓ still need a decision.
 
 **In one sentence:** Bank Agent Assist is an AI co-pilot that sits beside a bank's card-servicing call agent. It turns what the customer says on the call into a verified, policy-checked, agent-approved resolution, so the agent stops searching across systems and starts resolving.
 

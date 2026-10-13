@@ -1,6 +1,7 @@
 export type ErrorCode =
   | "bad_request"
   | "not_found"
+  | "call_not_found"
   | "not_verified"
   | "verification_locked"
   | "call_ended"
@@ -11,6 +12,7 @@ export type ErrorCode =
 const STATUS: Record<ErrorCode, number> = {
   bad_request: 400,
   not_found: 404,
+  call_not_found: 404,
   not_verified: 403,
   verification_locked: 423,
   call_ended: 409,

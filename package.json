@@ -10,6 +10,7 @@
     "build": "npm run build -w @baa/web",
     "start": "npm run start -w @baa/web",
     "test": "npm run test -w @baa/core",
+    "smoke:gemini": "npm run smoke:gemini -w @baa/core",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",

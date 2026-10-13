@@ -33,7 +33,7 @@ GEMINI_API_KEY=...                # from Google AI Studio
 # GOOGLE_CLOUD_LOCATION=global
 ```
 
-The demo state (calls, cases, audit log) lives in one in-memory service that survives hot reloads, so restart `npm run dev` after changing `packages/core`.
+Each visitor gets their own in-memory demo sandbox (calls, cases, audit log), so one person's **Reset demo data** never touches another's. Sandboxes survive hot reloads, so restart `npm run dev` after changing `packages/core`. Deploying: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 **Demo:** Start call → verify with `1990-04-14` and `4242` (or click **Fill in**) → Play call → Customer confirmed this charge → Review and approve → Wrap up call. Run it again without resetting to see the "case already open" path. **Reset demo data** (in the ⋮ menu) clears all cases. The theme follows your OS; the sun/moon button overrides it.
 
@@ -50,6 +50,7 @@ docs/              Scope, M0 flow, brainstorm, references, screenshots
 |---|---|
 | `npm run dev` | Start the app in development mode |
 | `npm test` | Unit tests for `packages/core` |
+| `npm run smoke:gemini` | Scenario A against live Gemini, with per-call latency (needs `GEMINI_API_KEY` in `apps/web/.env.local` or Vertex AI; skipped otherwise) |
 | `npm run typecheck` | TypeScript across all workspaces |
 | `npm run lint` | ESLint (Next.js, React hooks, accessibility, TypeScript rules) |
 | `npm run format` | Format everything with Prettier (Tailwind classes sorted) |

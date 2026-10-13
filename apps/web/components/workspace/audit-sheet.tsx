@@ -14,6 +14,8 @@ const LABELS: Record<string, string> = {
   "call.started": "Call started",
   "caller.verified": "Caller verified",
   "caller.verification_failed": "Verification failed",
+  "caller.verification_locked": "Verification locked",
+  "action.refused": "Action refused",
   "transaction.confirmed": "Transaction confirmed",
   "dispute.created": "Dispute created",
   "dispute.rejected": "Dispute blocked",

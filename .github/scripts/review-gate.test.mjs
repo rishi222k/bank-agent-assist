@@ -178,3 +178,14 @@ test("d. agent instructions and truncated compare lists are not docs-only", () =
   // The workflow passes -1 when the compare API returned a full (possibly truncated) page.
   assert.equal(decide(profile, { ...base, files: [{ filename: "docs/a.md" }], filesTotal: -1 }).state, "failure");
 });
+
+test("d. agent configuration anywhere in the tree is never docs", () => {
+  for (const file of [
+    ".claude/commands/x.md",
+    ".cursor/rules/a.md",
+    "apps/web/.claude/x.md",
+    "GEMINI.md",
+    "CLAUDE.local.md",
+  ])
+    assert.equal(isDocsOnly([file]), false, file);
+});

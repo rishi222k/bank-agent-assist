@@ -36,20 +36,22 @@ const newestFirst = (left, right) =>
   String(right.submitted_at ?? "").localeCompare(String(left.submitted_at ?? "")) ||
   Number(right.id ?? 0) - Number(left.id ?? 0);
 
-// Agents follow AGENTS.md / CLAUDE.md as instructions, so they're treated as code.
-const AGENT_INSTRUCTIONS = new Set(["AGENTS.md", "CLAUDE.md"]);
+// Agents follow these as instructions, so they're treated as code, never as docs.
+const AGENT_INSTRUCTIONS = new Set(["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", "GEMINI.md"]);
+const AGENT_DIRS = [".claude/", ".cursor/", ".codex/", ".gemini/"];
 
 const isDocPath = (path) =>
   typeof path === "string" &&
   !path.startsWith(".github/") &&
   !AGENT_INSTRUCTIONS.has(path.split("/").at(-1)) &&
+  !AGENT_DIRS.some((dir) => path.startsWith(dir) || path.includes(`/${dir}`)) &&
   !path.split("/").includes("..") &&
   (path.startsWith("docs/") || /\.md$/i.test(path));
 
 /**
  * True when every changed file is documentation. A rename counts only if both its old and new
  * paths are docs (moving code into docs/ deletes it from the app), and a truncated file list
- * (GitHub stops listing at 3000 files) never counts as docs-only.
+ * (the compare API lists at most 300 files) never counts as docs-only.
  * @param files [{filename, previous_filename?}] (plain path strings are accepted too)
  * @param total how many files the commit changes (negative when the list was truncated)
  */
@@ -109,7 +111,7 @@ export function decide(profile, input) {
   const files = input.files ?? [];
   if (isDocsOnly(files, input.filesTotal ?? files.length)) return pass("docs-only", "Docs-only change");
 
-  const verdictNote = structured ? " (latest independent review is not SHIP)" : "";
+  const verdictNote = structured ? " (latest independent review isn't a valid SHIP)" : "";
   return {
     state: "failure",
     path: null,

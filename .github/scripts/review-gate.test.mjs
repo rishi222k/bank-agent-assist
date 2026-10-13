@@ -189,3 +189,36 @@ test("d. agent configuration anywhere in the tree is never docs", () => {
   ])
     assert.equal(isDocsOnly([file]), false, file);
 });
+
+test("d. agent files and folders are matched case-insensitively", () => {
+  for (const file of [
+    "agents.md",
+    "Agents.MD",
+    "claude.md",
+    "apps/web/Claude.md",
+    ".Claude/commands/x.md",
+    "AGENT.md",
+    ".cursorrules",
+    ".Windsurf/rules.md",
+    ".GitHub/review/README.md",
+    "docs/.agents/x.md",
+  ])
+    assert.equal(isDocsOnly([file]), false, file);
+  assert.equal(isDocsOnly(["docs/agents-overview.md", "README.md", "Docs/Guide.md"]), true);
+});
+
+test("d. non-ASCII look-alikes and agent file variants are never docs", () => {
+  for (const file of [
+    "AGENT\u017f.md",
+    "docs/re\u0301sume\u0301.md",
+    "AGENTS.override.md",
+    "agents.v2.md",
+    "docs\\x.md",
+    ".roorules",
+    ".kiro/steering/a.md",
+    "copilot-instructions.md",
+  ])
+    assert.equal(isDocsOnly([file]), false, file);
+  assert.equal(isDocsOnly(["Docs/x.ts"]), false);
+  assert.equal(isDocsOnly(["docs/reference/pitch.pdf", "docs/agents-overview.md"]), true);
+});

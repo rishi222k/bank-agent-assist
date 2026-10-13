@@ -41,7 +41,7 @@ GEMINI_API_KEY=...                # from Google AI Studio
 
 Each visitor gets their own in-memory demo sandbox (calls, cases, audit log), so one person's **Reset demo data** never touches another's. Sandboxes survive hot reloads, so restart `npm run dev` after changing `packages/core`. Deploying: [docs/DEPLOY.md](docs/DEPLOY.md).
 
-**Demo:** Start call → verify with `1990-04-14` and `4242` (or click **Fill in**) → Play call → Customer confirmed this charge → Review and approve → Wrap up call. Run it again without resetting to see the "case already open" path. **Reset demo data** (in the ⋮ menu) clears your demo. The theme follows your OS; the sun/moon button overrides it.
+**Demo:** Start call → verify with `1990-04-14` and `4242` (or click **Fill**) → Play call → Customer confirmed this charge → Review and approve → Wrap up call. Run it again without resetting to see the "case already open" path. **Reset demo data** (in the ⋮ menu) clears your demo. The theme follows your OS; the sun/moon button overrides it.
 
 **Microphone (Chrome):** after verifying, click the microphone button next to Play call, allow mic access, pick who is speaking (Agent or the customer), and talk. The browser transcribes; Chrome sends the audio to Google's speech service.
 
@@ -67,7 +67,7 @@ docs/              Scope, M0 flow, brainstorm, references, screenshots
 
 ## Contributing
 
-Using an AI coding agent? It should read **[AGENTS.md](AGENTS.md)** first (Claude Code loads it through `CLAUDE.md`). Work on a branch and open a pull request to `main`. Three checks must pass: `ci`, `secrets` and `review-required`. The review check can be satisfied by an independent review, another collaborator's approval, or the `skip-review` label: see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Dependabot opens weekly grouped dependency updates. Branch protection: [.github/rulesets](.github/rulesets/README.md).
+Using an AI coding agent? It should read **[AGENTS.md](AGENTS.md)** first (Claude Code loads it through `CLAUDE.md`). Work on a branch and open a pull request to `main`. Three checks must pass: `ci`, `secrets` and `review-required`. The review check can be satisfied by an independent review, another collaborator's approval, the `skip-review` label, or a docs-only change: see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Dependabot opens weekly grouped dependency updates. Branch protection: [.github/rulesets](.github/rulesets/README.md).
 
 ## Docs
 

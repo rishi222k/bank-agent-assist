@@ -27,7 +27,7 @@ npm run format         # fix formatting (Prettier, Tailwind classes sorted)
 npm run smoke:gemini   # scenario A against live Gemini (needs a key; otherwise reported as skipped)
 ```
 
-- **Demo caller:** date of birth `1990-04-14`, card last 4 `4242` (or click **Fill in**).
+- **Demo caller:** date of birth `1990-04-14`, card last 4 `4242` (or click **Fill**).
 - **Gemini:** put `GEMINI_API_KEY` (or Vertex AI settings) in `apps/web/.env.local`, copied from `apps/web/.env.example`. Never commit it. Without a key the app runs **Mock AI**, labelled in the header; `AI_PROVIDER=off` forces the AI-failure path (X-06).
 - **Restart `npm run dev` after editing `packages/core`.** The call service lives in per-visitor in-memory sandboxes that survive hot reloads, so they keep running the old code.
 - The microphone mode uses the browser's Web Speech API and needs Google Chrome.
@@ -79,8 +79,8 @@ These are what reviews check (from `docs/SCOPE.md` section 8 and [.github/review
 4. Three required checks: `ci`, `secrets`, `review-required`. `review-required` passes on **any one** of:
    - an **independent review** with `VERDICT: SHIP` for the latest commit (the Claude reviewer posts one automatically on ready PRs from this repository; or follow [.github/review/REVIEWER.md](.github/review/REVIEWER.md) in a **separate, fresh session**),
    - a GitHub **Approve** from a collaborator who isn't the PR author,
-   - the **`skip-review`** label, added by a collaborator,
-   - a **docs-only** change (Markdown or `docs/` only; not `.github/`, `AGENTS.md` or `CLAUDE.md`).
+   - the **`skip-review`** label, added by a collaborator with write access,
+   - a **docs-only** change (Markdown or `docs/` only, not under `.github/`, no agent-instruction files (`AGENTS.md`, `CLAUDE.md` and their variants, in any letter case) or agent folders (`.claude/`, `.cursor/`, …), and plain-ASCII file names).
 5. When a review says `FIX_FIRST`: collect **all** blockers, check each one is real, fix them, run the checks, **push once**, and comment on the PR with 1–4 bullets on what changed. Then get a fresh review of the new commit.
 6. **`SHIP` on the latest commit is an absolute stop:** no more pushes, no "while I'm here" changes. Report that the PR is ready.
 7. **Three reviewed commits without `SHIP`: stop** and tell the person you work for what's left, with one recommendation (merge as-is, split, or shelve).
@@ -95,7 +95,7 @@ These are what reviews check (from `docs/SCOPE.md` section 8 and [.github/review
 
 ### Stacked PRs
 
-If PR B is based on PR A's branch, merge A first, then **retarget B to `main` before deleting A's branch**. Deleting a base branch closes every PR based on it.
+If PR B is based on PR A's branch, merge A first, then **retarget B to `main` before deleting A's branch**. Deleting a base branch closes every PR based on it. Retargeting re-runs `review-required` automatically; if B's status doesn't update within a minute, run it by hand: `gh workflow run review-required.yml -f pr=<B>`.
 
 ## Keeping docs current
 

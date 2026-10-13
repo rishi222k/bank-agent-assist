@@ -5,7 +5,8 @@
 //   a. independent-review  a trusted, complete Software Review with VERDICT: SHIP for the exact head
 //   b. approval            a GitHub "Approve" on the exact head from a collaborator who isn't the author
 //   c. skip-label          the `skip-review` label, added by someone with write access
-//   d. docs-only           every changed file is documentation (Markdown or docs/), outside .github/
+//   d. docs-only           every changed file is documentation (Markdown or docs/), with no
+//                          .github/ or agent-instruction files (see isDocPath)
 //
 // Input is a JSON file the workflow assembles from the GitHub API; this script never sees PR code.
 // It writes {"state","path","description"} to --output (or stdout) and exits 0 unless its own
@@ -36,17 +37,40 @@ const newestFirst = (left, right) =>
   String(right.submitted_at ?? "").localeCompare(String(left.submitted_at ?? "")) ||
   Number(right.id ?? 0) - Number(left.id ?? 0);
 
-// Agents follow these as instructions, so they're treated as code, never as docs.
-const AGENT_INSTRUCTIONS = new Set(["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", "GEMINI.md"]);
-const AGENT_DIRS = [".claude/", ".cursor/", ".codex/", ".gemini/"];
+// Agents follow these as instructions, so they're treated as code, never as docs. Matching is
+// deliberately broad and fails closed:
+// - Any non-ASCII path is never docs. Case-insensitive checkouts fold more than ASCII case (macOS
+//   treats `ſ` as `s`), so `AGENTſ.md` would overwrite `AGENTS.md` on clone.
+// - Names are compared in lowercase: `agents.md` overwrites `AGENTS.md` on macOS and Windows.
+// - Every variant of an agent file counts, e.g. `AGENTS.override.md` (Codex) or `CLAUDE.local.md`.
+const AGENT_FILE = /^(agents?|claude|gemini|copilot-instructions)(\..*)?\.md$/;
+const AGENT_DOTFILES = new Set([".cursorrules", ".windsurfrules", ".clinerules", ".roorules", ".goosehints"]);
+const AGENT_DIRS = new Set([
+  ".github",
+  ".claude",
+  ".cursor",
+  ".codex",
+  ".gemini",
+  ".agents",
+  ".windsurf",
+  ".clinerules",
+  ".roo",
+  ".kiro",
+  ".junie",
+  ".continue",
+  ".amazonq",
+  ".aider",
+]);
 
-const isDocPath = (path) =>
-  typeof path === "string" &&
-  !path.startsWith(".github/") &&
-  !AGENT_INSTRUCTIONS.has(path.split("/").at(-1)) &&
-  !AGENT_DIRS.some((dir) => path.startsWith(dir) || path.includes(`/${dir}`)) &&
-  !path.split("/").includes("..") &&
-  (path.startsWith("docs/") || /\.md$/i.test(path));
+const isDocPath = (path) => {
+  if (typeof path !== "string" || !/^[\x20-\x7e]+$/.test(path) || path.includes("\\")) return false;
+  const parts = path.toLowerCase().split("/");
+  const name = parts.at(-1);
+  if (parts.includes("..") || AGENT_FILE.test(name) || AGENT_DOTFILES.has(name)) return false;
+  if (parts.slice(0, -1).some((dir) => AGENT_DIRS.has(dir))) return false;
+  // Only the real docs/ folder holds non-Markdown docs (e.g. the pitch PDF).
+  return path.startsWith("docs/") || name.endsWith(".md");
+};
 
 /**
  * True when every changed file is documentation. A rename counts only if both its old and new

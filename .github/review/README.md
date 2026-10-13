@@ -106,8 +106,10 @@ Collaborators choose how much review a change needs, so nobody is locked out.
    names who skipped review, so the choice is visible.
 4. **Docs only:** every file changed by the exact head commit (old and new
    paths) is Markdown or under `docs/`, nothing is under `.github/`, and no
-   agent-instruction file or folder changes (`AGENTS.md`, `CLAUDE.md`,
-   `.claude/`, `.cursor/` and similar, compared case-insensitively).
+   agent-instruction file or folder changes (`AGENTS.md`, `CLAUDE.md` and
+   their variants, `.claude/`, `.cursor/` and similar, compared
+   case-insensitively), and every path is plain ASCII (case-insensitive
+   checkouts fold some non-ASCII letters into ASCII ones).
 
 The Claude reviewer runs automatically on ready pull requests from branches in
 this repository and can be dispatched by hand. It refuses fork PRs, because it

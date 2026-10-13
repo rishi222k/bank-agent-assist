@@ -80,7 +80,7 @@ These are what reviews check (from `docs/SCOPE.md` section 8 and [.github/review
    - an **independent review** with `VERDICT: SHIP` for the latest commit (the Claude reviewer posts one automatically on ready PRs from this repository; or follow [.github/review/REVIEWER.md](.github/review/REVIEWER.md) in a **separate, fresh session**),
    - a GitHub **Approve** from a collaborator who isn't the PR author,
    - the **`skip-review`** label, added by a collaborator with write access,
-   - a **docs-only** change (Markdown or `docs/` only, not under `.github/`, and no agent-instruction files (`AGENTS.md`, `CLAUDE.md` and similar, in any letter case) or agent folders (`.claude/`, `.cursor/`, …)).
+   - a **docs-only** change (Markdown or `docs/` only, not under `.github/`, no agent-instruction files (`AGENTS.md`, `CLAUDE.md` and their variants, in any letter case) or agent folders (`.claude/`, `.cursor/`, …), and plain-ASCII file names).
 5. When a review says `FIX_FIRST`: collect **all** blockers, check each one is real, fix them, run the checks, **push once**, and comment on the PR with 1–4 bullets on what changed. Then get a fresh review of the new commit.
 6. **`SHIP` on the latest commit is an absolute stop:** no more pushes, no "while I'm here" changes. Report that the PR is ready.
 7. **Three reviewed commits without `SHIP`: stop** and tell the person you work for what's left, with one recommendation (merge as-is, split, or shelve).

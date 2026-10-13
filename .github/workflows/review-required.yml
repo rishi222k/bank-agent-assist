@@ -27,12 +27,6 @@ on:
         required: true
         type: string
 
-# Keyed on the event too: a run started by a fork's review (read-only token, can't publish) must
-# never cancel a pull_request_target run that is about to publish.
-concurrency:
-  group: review-required-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
   pull-requests: read
@@ -47,6 +41,12 @@ jobs:
       (github.event.pull_request.draft == false &&
        (github.event_name != 'pull_request_target' || github.event.action != 'edited' ||
         github.event.changes.base != null))
+    # Concurrency is on the job, not the workflow, so a run whose job is skipped (a title edit)
+    # never cancels a run that is about to publish. Keyed on the event too: a run started by a
+    # fork's review (read-only token, can't publish) can't cancel a pull_request_target run.
+    concurrency:
+      group: review-required-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

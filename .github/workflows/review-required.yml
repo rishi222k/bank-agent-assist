@@ -1,18 +1,25 @@
 name: Review Required
 
-# Provider-independent evidence gate. Review producers may fail or be replaced;
-# this check cares only that a trusted formal review for the exact PR head obeys
-# the repository-owned Bank Agent Assist contract.
+# Publishes the `review-required` status for the exact PR head. It passes on ANY of:
+#   a. a trusted independent review with VERDICT: SHIP (Claude in CI, an agent session, or a person)
+#   b. a GitHub "Approve" from a collaborator who isn't the PR author
+#   c. the `skip-review` label, added by someone with write access
+#   d. a docs-only change
+# The decision is .github/scripts/review-gate.mjs; see .github/review/README.md and CONTRIBUTING.md.
+#
+# Safety: pull_request_target runs with a token that can post statuses even on fork PRs. That is
+# safe here only because this workflow never checks out or runs PR code: it reads PR metadata from
+# the API and runs scripts from main. Keep it that way.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     branches: [main]
   pull_request_review:
     types: [submitted, edited, dismissed]
   workflow_dispatch:
     inputs:
       pr:
-        description: "Open PR number to validate"
+        description: "Open PR number to re-check"
         required: true
         type: string
 
@@ -23,6 +30,7 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  issues: read
   statuses: write
 
 jobs:
@@ -40,70 +48,71 @@ jobs:
         run: |
           set -euo pipefail
           data=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json number,headRefOid,baseRefName,state)
+            --json number,headRefOid,baseRefName,state,author)
           test "$(jq -r .state <<<"$data")" = OPEN
           test "$(jq -r .baseRefName <<<"$data")" = main
           {
             echo "number=$(jq -r .number <<<"$data")"
             echo "sha=$(jq -r .headRefOid <<<"$data")"
+            echo "author=$(jq -r .author.login <<<"$data")"
           } >> "$GITHUB_OUTPUT"
 
-      # Policy comes from main. A PR may propose the next profile or validator,
-      # but it cannot weaken the policy judging its own changes.
-      - name: Checkout governing policy
+      # Policy and the gate script come from main. A PR may propose changes to them, but it can't
+      # change the rules judging its own merge.
+      - name: Checkout governing policy (main, never the PR)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
+          persist-credentials: false
 
-      - name: Validate current-head review evidence
+      - name: Collect review evidence
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.pr.outputs.sha }}
+          AUTHOR: ${{ steps.pr.outputs.author }}
         run: |
           set -euo pipefail
-          gh api --paginate --slurp \
-            "/repos/${{ github.repository }}/pulls/$PR/reviews" \
-            > "$RUNNER_TEMP/reviews.json"
+          repo="/repos/$GITHUB_REPOSITORY"
+          gh api --paginate --slurp "$repo/pulls/$PR/reviews" > "$RUNNER_TEMP/reviews.json"
+          gh api --paginate --slurp "$repo/pulls/$PR/files" | jq '[.[][].filename]' > "$RUNNER_TEMP/files.json"
 
-          policy_root="$GITHUB_WORKSPACE"
-          if [ ! -f "$policy_root/.github/scripts/validate-review-profile.mjs" ]; then
-            # One-time bootstrap only. This context is not made required until
-            # the governing files are on main and a normal canary has passed.
-            git fetch --no-tags origin "$SHA"
-            git worktree add --detach "$RUNNER_TEMP/proposed-policy" "$SHA"
-            policy_root="$RUNNER_TEMP/proposed-policy"
-            echo "Bootstrap: main has no policy yet; validating the proposed policy."
+          # Who added the skip label (most recent "labeled" event), and their access level.
+          skip='null'
+          if gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx 'skip-review'; then
+            actor=$(gh api --paginate --slurp "$repo/issues/$PR/events" \
+              | jq -r '[.[][] | select(.event == "labeled" and .label.name == "skip-review")] | last | .actor.login // empty')
+            permission=none
+            if [ -n "$actor" ]; then
+              permission=$(gh api "$repo/collaborators/$actor/permission" --jq .permission 2>/dev/null) || permission=none
+            fi
+            skip=$(jq -n --arg a "$actor" --arg p "$permission" '{addedBy: $a, permission: $p}')
           fi
 
-          cd "$policy_root"
-          set +e
-          node .github/scripts/validate-review-profile.mjs \
+          jq -n \
+            --arg sha "$SHA" --arg author "$AUTHOR" \
+            --slurpfile reviews "$RUNNER_TEMP/reviews.json" \
+            --slurpfile files "$RUNNER_TEMP/files.json" \
+            --argjson skip "$skip" \
+            '{headSha: $sha, author: $author, reviews: $reviews, files: $files[0], skipLabel: $skip}' \
+            > "$RUNNER_TEMP/gate-input.json"
+
+      - name: Decide and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/review-gate.mjs \
             .github/review/bank-agent-assist-software-review-v1.json \
             --profile-id bank-agent-assist-software \
-            --reviews-json "$RUNNER_TEMP/reviews.json" \
-            --head-sha "$SHA" \
-            > "$RUNNER_TEMP/review-validation.log" 2>&1
-          validation_status=$?
-          set -e
-
-          if [ "$validation_status" -eq 0 ]; then
-            state=success
-            description="Valid provider-independent review for exact PR head"
-          else
-            state=failure
-            description="No valid provider-independent review for exact PR head"
-          fi
-
-          gh api --method POST "/repos/${{ github.repository }}/statuses/$SHA" \
+            --input "$RUNNER_TEMP/gate-input.json" \
+            --output "$RUNNER_TEMP/gate.json"
+          state=$(jq -r .state "$RUNNER_TEMP/gate.json")
+          description=$(jq -r .description "$RUNNER_TEMP/gate.json")
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/statuses/$SHA" \
             -f state="$state" \
             -f context="review-required" \
             -f description="$description" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          cat "$RUNNER_TEMP/review-validation.log"
-          if [ "$validation_status" -ne 0 ]; then
-            echo "No valid evidence yet; the explicit review-required status is red."
-            exit 0
-          fi
-          echo "A trusted, complete Bank Agent Assist review exists for $SHA."
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "review-required: $state — $description"

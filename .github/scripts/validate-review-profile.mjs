@@ -2,6 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 function fail(message) {
   console.error(`review-profile: ${message}`);
@@ -340,9 +341,15 @@ export async function validateReviewSet(profile, reviewsFile, expectedHeadSha) {
   }
   const reviews = (Array.isArray(payload) ? payload : []).flat(Infinity);
   const heading = `## ${profile.heading}`;
+  // Only trusted authors' reviews are candidates, so on a public repository a stranger's
+  // look-alike review can't become "the latest" and turn a valid result invalid.
+  const isTrusted = (review) =>
+    profile.trustedReviewers.includes(review?.user?.login) ||
+    profile.trustedAuthorAssociations.includes(review?.author_association);
   const candidates = reviews
     .filter((review) => review?.commit_id === expectedHeadSha)
     .filter((review) => review?.state !== "DISMISSED")
+    .filter(isTrusted)
     // A body that purports to be this profile's review must not evade the
     // strict parser merely by placing text before the heading.
     .filter((review) => typeof review?.body === "string" && review.body.includes(heading))
@@ -412,4 +419,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) await main();
+// pathToFileURL: a plain `file://${path}` comparison never matches a path with spaces, which
+// silently skipped validation and exited 0.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

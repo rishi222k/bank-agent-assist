@@ -67,10 +67,17 @@ jobs:
         run: |
           set -euo pipefail
           data=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json number,headRefOid,headRefName,baseRefName,state)
+            --json number,headRefOid,headRefName,baseRefName,state,isCrossRepository)
           state=$(jq -r .state <<<"$data")
           if [ "$state" != "OPEN" ]; then
             echo "::error::PR #$NUMBER is $state, not OPEN — nothing to review."
+            exit 1
+          fi
+          # Never run a fork's code next to the reviewer credential: `npm ci` runs the PR's
+          # install scripts on the runner that later holds CLAUDE_CODE_OAUTH_TOKEN. Fork PRs are
+          # reviewed by a collaborator (an Approve, or a review from a local agent session).
+          if [ "$(jq -r .isCrossRepository <<<"$data")" = "true" ]; then
+            echo "::error::PR #$NUMBER comes from a fork; the Claude reviewer only runs on branches in this repository."
             exit 1
           fi
           {
@@ -92,9 +99,10 @@ jobs:
 
       - name: Fetch base branch
         if: steps.pr.outcome == 'success'
+        env:
+          BASE: ${{ steps.pr.outputs.base }}
         run: |
-          git fetch --no-tags origin \
-            "+refs/heads/${{ steps.pr.outputs.base }}:refs/remotes/origin/${{ steps.pr.outputs.base }}"
+          git fetch --no-tags origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: steps.pr.outcome == 'success'

@@ -5,6 +5,14 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Majors that need a deliberate migration, not a weekly bump.
+      # TypeScript 7 is blocked by typescript-eslint's peer range (<6.1);
+      # @types/node must track the Node runtime this repo runs, not npm latest.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       # One PR per week for routine bumps instead of one per package.
       minor-and-patch:
